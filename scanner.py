@@ -292,6 +292,29 @@ def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional
     
     Returns: dict with scan stats (folders_total, folders_done, clean_count, corrupt_count, error_count, empty_count)
     """
+    # Reclaim any locks held by THIS worker that may have leaked from a
+    # crashed previous run. (Other workers' locks are left alone — they may
+    # still be active. Stale locks expire automatically via lock_until.)
+    try:
+        from config import WORKER_ID
+        if db_conn.backend == "postgres":
+            with db_conn.raw.cursor() as cur:
+                cur.execute(
+                    "UPDATE repair_files SET worker_id = NULL, lock_until = NULL "
+                    "WHERE worker_id = %s",
+                    (WORKER_ID,),
+                )
+            db_conn.raw.commit()
+        else:
+            db_conn.raw.execute(
+                "UPDATE files SET worker_id = NULL, lock_until = NULL "
+                "WHERE worker_id = ?",
+                (WORKER_ID,),
+            )
+            db_conn.raw.commit()
+    except Exception:
+        pass
+
     # Enumerate all folders
     folders = _enumerate_movie_folders(roots)
     total = len(folders)
@@ -299,20 +322,22 @@ def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional
     if progress_callback:
         progress_callback(0, total, "", "discovery")
     
-    # Filter out recently scanned folders if not rescanning
-    # IMPORTANT: TIMEOUT and ERROR states are always re-scanned (failed attempts)
+    # Build the set of folders to skip:
+    #   1. Recently scanned with a definitive result (CLEAN/CORRUPT/EMPTY/MISSING)
+    #   2. Currently locked by another worker (multi-PC mode)
+    skip_paths = set()
+
     if not rescan:
         cutoff_dt = datetime.utcnow() - timedelta(days=7)
         existing = db.get_files(db_conn)
         # Skip folder only if: scanned recently AND result was definitive (not TIMEOUT/ERROR)
         # last_scan_at can be either a string (SQLite ISO text) or a datetime (Postgres TIMESTAMPTZ),
         # so normalize both sides to datetime objects before comparing.
-        recent_scans = set()
         for r in existing:
             last_scan = r.get("last_scan_at")
             if not last_scan:
                 continue
-            if r.get("scan_state") in ("TIMEOUT", "ERROR", "UNKNOWN"):
+            if r.get("scan_state") in ("TIMEOUT", "ERROR", "UNKNOWN", "SCANNING"):
                 continue
             # Normalize to naive UTC datetime
             if isinstance(last_scan, str):
@@ -326,10 +351,22 @@ def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional
             if last_dt.tzinfo is not None:
                 last_dt = last_dt.replace(tzinfo=None)
             if last_dt > cutoff_dt:
-                recent_scans.add(r["folder_path"])
-        todo = [f for f in folders if str(f) not in recent_scans]
-    else:
-        todo = folders
+                skip_paths.add(r["folder_path"])
+
+    # Always exclude folders currently locked by another worker (even with --rescan).
+    # The atomic claim_for_scan() in _scan_one is the real safeguard, but pre-filtering
+    # avoids spending time on folders we know we'd be denied.
+    try:
+        from config import WORKER_ID
+        for r in db.get_locked_folders(db_conn):
+            if r.get("worker_id") != WORKER_ID:
+                skip_paths.add(r["folder_path"])
+    except Exception:
+        # If get_locked_folders fails (e.g., older schema), proceed anyway.
+        # The atomic claim will still protect us at scan time.
+        pass
+
+    todo = [f for f in folders if str(f) not in skip_paths]
     
     if limit:
         todo = todo[:limit]
@@ -354,10 +391,12 @@ def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional
         if cancel_flag and cancel_flag():
             return None
         
+        folder_str = str(folder)
+        
         # Check if folder still exists
         if not folder.exists():
             return {
-                "folder_path": str(folder),
+                "folder_path": folder_str,
                 "video_path": None,
                 "size_bytes": 0,
                 "scan_state": "MISSING",
@@ -365,9 +404,24 @@ def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional
                 "last_scan_secs": 0.0,
             }
         
+        # Atomically claim this folder for ourselves. If another PC has an
+        # active lock, claim_for_scan returns False and we skip this folder
+        # (some other worker is already on it).
+        try:
+            from config import WORKER_ID
+            if not db.claim_for_scan(db_conn, folder_str, WORKER_ID):
+                return {
+                    "folder_path": folder_str,
+                    "_skipped_locked": True,  # sentinel for the main loop
+                }
+        except Exception:
+            # If claim fails for any reason, fall through and try to scan anyway.
+            # Worst case: we duplicate work, not data corruption.
+            pass
+        
         # Notify that scan is starting for this folder
         if scan_start_callback:
-            scan_start_callback(str(folder))
+            scan_start_callback(folder_str)
         
         video = largest_video_in_folder(folder)
         
@@ -481,8 +535,20 @@ def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional
                 if cancel_flag and cancel_flag():
                     continue
                 
-                # Update database
-                db.upsert_file_record(db_conn, result)
+                # Folder was claimed by another worker — skip silently.
+                # Don't count toward stats; another PC is handling it.
+                if result.get("_skipped_locked"):
+                    # No DB update, no progress (other PC will report)
+                    continue
+                
+                # Update database (this also overwrites our 'SCANNING' marker
+                # with the final state) and clear our claim lock.
+                try:
+                    db.upsert_file_record(db_conn, result)
+                    db.release_scan_claim(db_conn, result["folder_path"])
+                except Exception as exc:
+                    # If DB write fails, log but keep going
+                    print(f"[scanner] DB update failed for {result['folder_path']}: {exc}", flush=True)
                 
                 # Update stats
                 state = result["scan_state"]

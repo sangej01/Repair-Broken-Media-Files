@@ -6,9 +6,13 @@ Roadmap and ideas for future versions. Not committed to specific timelines.
 
 ## Recently Completed
 
-### ✅ PostgreSQL Backend (Phase 1-2 done)
+### ✅ PostgreSQL Backend + Distributed Scan Coordination (Phase 1-3 done)
 
-The dual-backend infrastructure is in place. Switch via `DB_BACKEND` in `.env`:
+The dual-backend infrastructure plus atomic claim semantics is in place.
+Multiple PCs can now run scans simultaneously against the same library
+without duplicating work.
+
+Switch via `DB_BACKEND` in `.env`:
 - `sqlite` (default) → local `repair.db`
 - `postgres` → shared `casaos` database, tables `repair_files` / `repair_runs`
 
@@ -16,14 +20,18 @@ What's done:
 - Abstract dispatch via `RepairDBConnection` wrapper in `db.py`
 - Both backends implement identical operations (upsert, get, mark_*, etc.)
 - Postgres host fallback (LAN → Tailscale DNS → Tailscale IP) lifted from compressor
-- `worker_id` and `lock_until` columns reserved in Postgres schema for future Phase 3 coordination
+- `worker_id` and `lock_until` columns in both backends
+- SQLite auto-migration: ALTER TABLE adds new columns to existing databases
 - Schema auto-migration: tables auto-created on first connect
-- Tested with both backends (SQLite default unchanged)
+- **Atomic claim/release for distributed scanning** (`db.claim_for_scan`,
+  `db.release_scan_claim`)
+- **Stale lock cleanup** on scan startup (per-worker)
+- **`SCANNING` status** visible in GUI showing which folders are in flight
+- Tested with both backends (7 claim/release scenarios verified)
 
-What's still pending (Phase 3-5 below):
-- Distributed scan coordination via `FOR UPDATE SKIP LOCKED`
-- Headless `python main.py worker` mode
-- GUI per-worker activity panels
+What's still pending (Phase 4-5 below):
+- Headless `python main.py worker` mode (no GUI required)
+- GUI per-worker activity panel (see all PCs' progress in real time)
 
 ---
 
@@ -84,19 +92,25 @@ WORKER_ID=ms01-a
 - ~~Add lock_until TIMESTAMP for distributed coordination~~
 - ~~Use ON CONFLICT (folder_path) DO UPDATE for upserts~~ (uses SELECT-then-INSERT/UPDATE for now; can optimize later)
 
-**Phase 3: Distributed Scan Coordination (~6h)**
-Worker claim query (the magic):
+**Phase 3: Distributed Scan Coordination (~6h)** ✅ DONE
+Implemented as `db.claim_for_scan(conn, folder_path, worker_id, lock_minutes=60)`:
 ```sql
-SELECT folder_path FROM files
-WHERE scan_state IN ('UNKNOWN', 'TIMEOUT', 'ERROR')
-  AND (lock_until IS NULL OR lock_until < NOW())
-ORDER BY first_seen_at
-LIMIT 1
-FOR UPDATE SKIP LOCKED
+INSERT INTO repair_files (folder_path, worker_id, lock_until, scan_state, first_seen_at)
+VALUES (%s, %s, %s, 'SCANNING', %s)
+ON CONFLICT (folder_path) DO UPDATE
+    SET worker_id = EXCLUDED.worker_id,
+        lock_until = EXCLUDED.lock_until,
+        scan_state = 'SCANNING'
+    WHERE repair_files.lock_until IS NULL
+       OR repair_files.lock_until < NOW()
+       OR repair_files.worker_id = EXCLUDED.worker_id
+RETURNING worker_id, scan_state
 ```
-- `FOR UPDATE SKIP LOCKED` = atomic claim, no two workers grab same folder
-- Lock expires after 1 hour (handles dead workers automatically)
-- Worker updates `worker_id`, `last_scan_at`, `scan_state` when done
+- Atomic claim, no two workers grab same folder
+- Lock auto-expires after 60 minutes (handles dead workers)
+- Same worker can refresh own lock (long-running scans)
+- Scanner releases lock + writes final result via `db.release_scan_claim()`
+- 7 claim/release scenarios verified in test suite
 
 **Phase 4: Worker Mode (~4h)**
 - New CLI: `python main.py worker` runs headlessly

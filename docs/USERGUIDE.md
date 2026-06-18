@@ -205,6 +205,10 @@ The app has two view modes accessible via the dropdown at the top:
 - 🟠 **TIMEOUT** (orange) - Scan exceeded timeout - file too large or NAS too slow
 - 🟣 **MISSING** (purple) - Folder no longer exists on disk
 - ⚪ **EMPTY** (grey) - No video file found in folder
+- 🔵 **SCANNING** (blue) - Currently being scanned by a worker. The
+  `worker_id` column shows which PC is scanning it. Other PCs running scans
+  will see this lock and skip the folder until completion (or until the
+  60-minute lock expires).
 - ⚫ **UNKNOWN** (default) - Status not yet determined
 
 **About UNKNOWN status:** This is a normal, expected status. Movies become UNKNOWN when:

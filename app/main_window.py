@@ -69,6 +69,7 @@ STATE_COLORS = {
     "TIMEOUT": "#fab387",   # Orange (different from ERROR - file just took too long)
     "EMPTY": "#6c7086",     # Grey
     "MISSING": "#cba6f7",   # Purple - folder deleted/moved (no longer on disk)
+    "SCANNING": "#89b4fa",  # Blue - currently being scanned (possibly by another PC)
     "REMEDIATED": "#94e2d5", # Teal
     "SKIPPED": "#585b70",   # Dark grey
 }
@@ -219,7 +220,7 @@ class MainWindow(QMainWindow):
         
         filter_row.addWidget(QLabel("Status:"))
         self._filter_combo = QComboBox()
-        self._filter_combo.addItems(["All", "CORRUPT", "CLEAN", "ERROR", "TIMEOUT", "EMPTY", "MISSING", "UNKNOWN"])
+        self._filter_combo.addItems(["All", "CORRUPT", "CLEAN", "ERROR", "TIMEOUT", "EMPTY", "MISSING", "SCANNING", "UNKNOWN"])
         self._filter_combo.currentTextChanged.connect(self._apply_filter)
         self._filter_combo.setFixedWidth(120)
         filter_row.addWidget(self._filter_combo)

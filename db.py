@@ -14,7 +14,7 @@ collision with `Movie-Library-Compressor`'s tables in the same database.
 import json
 import re
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -101,10 +101,13 @@ CREATE TABLE IF NOT EXISTS files (
     remediation_log TEXT,
     attempts        INTEGER NOT NULL DEFAULT 0,
     first_seen_at   TEXT    NOT NULL,
-    notes           TEXT
+    notes           TEXT,
+    worker_id       TEXT,
+    lock_until      TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_files_scan_state  ON files(scan_state);
 CREATE INDEX IF NOT EXISTS idx_files_remediation ON files(remediation);
+-- Note: idx_files_lock_until is created after the ALTER TABLE migration in _init_sqlite()
 CREATE TABLE IF NOT EXISTS runs (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     kind           TEXT    NOT NULL,
@@ -126,6 +129,15 @@ def _init_sqlite() -> RepairDBConnection:
     raw = sqlite3.connect(DB_PATH)
     raw.row_factory = sqlite3.Row
     raw.executescript(_SQLITE_SCHEMA)
+    # Migrate existing databases that predate worker_id/lock_until columns.
+    # `ALTER TABLE ... ADD COLUMN` fails if the column already exists, so we
+    # check first.
+    cols = {r["name"] for r in raw.execute("PRAGMA table_info(files)").fetchall()}
+    if "worker_id" not in cols:
+        raw.execute("ALTER TABLE files ADD COLUMN worker_id TEXT")
+    if "lock_until" not in cols:
+        raw.execute("ALTER TABLE files ADD COLUMN lock_until TEXT")
+    raw.execute("CREATE INDEX IF NOT EXISTS idx_files_lock_until ON files(lock_until)")
     raw.commit()
     return RepairDBConnection("sqlite", raw)
 
@@ -606,3 +618,140 @@ def verify_existence(conn: RepairDBConnection, paths: Optional[List[str]] = None
             pass
 
     return missing_count
+
+
+# =============================================================================
+#  Distributed scan coordination — claim/release locks for multi-PC scanning
+# =============================================================================
+
+def claim_for_scan(
+    conn: RepairDBConnection,
+    folder_path: str,
+    worker_id: str,
+    lock_minutes: int = 60,
+) -> bool:
+    """Atomically claim a folder for scanning.
+
+    Returns True if claim was acquired (this worker can proceed to scan).
+    Returns False if another worker already holds an active lock.
+
+    Behavior:
+      - If the folder doesn't exist in the database yet, INSERT it with the
+        claim in place.
+      - If it exists and has no active lock (or lock has expired), UPDATE
+        with our worker_id and a fresh lock_until.
+      - If another worker holds an unexpired lock, return False.
+
+    The lock auto-expires after `lock_minutes` so dead workers don't block
+    folders forever.
+    """
+    table = _files_table(conn)
+    ph = _ph(conn)
+    now = datetime.utcnow()
+    now_iso = now.isoformat() + "Z"
+    expiry_iso = (now + timedelta(minutes=lock_minutes)).isoformat() + "Z"
+
+    if conn.backend == "postgres":
+        # Postgres: UPSERT with conditional WHERE on the UPDATE path.
+        # The UPDATE proceeds only when:
+        #   - no lock is held, OR
+        #   - the existing lock has expired, OR
+        #   - we already own the lock (refresh case)
+        # If none of those are true (different worker holds active lock), the
+        # ON CONFLICT WHERE filter is false and the row is NOT updated, leaving
+        # RETURNING to yield no row (we lost the claim).
+        sql = f"""
+            INSERT INTO {table} (folder_path, worker_id, lock_until,
+                                 scan_state, first_seen_at)
+            VALUES ({ph}, {ph}, {ph}::timestamptz, 'SCANNING', {ph}::timestamptz)
+            ON CONFLICT (folder_path) DO UPDATE
+                SET worker_id  = EXCLUDED.worker_id,
+                    lock_until = EXCLUDED.lock_until,
+                    scan_state = 'SCANNING'
+                WHERE {table}.lock_until IS NULL
+                   OR {table}.lock_until < NOW()
+                   OR {table}.worker_id = EXCLUDED.worker_id
+            RETURNING worker_id, scan_state
+        """
+        with conn.raw.cursor() as cur:
+            cur.execute(sql, (folder_path, worker_id, expiry_iso, now_iso))
+            row = cur.fetchone()
+        conn.raw.commit()
+        if row is None:
+            # Another worker holds the lock — INSERT did nothing on conflict
+            return False
+        # row is a RealDictRow; check that we are the holder
+        return row.get("worker_id") == worker_id
+
+    # SQLite path: simpler since there's only one process at a time in practice.
+    # We still respect the lock semantics for symmetry.
+    existing = _fetchone(
+        conn,
+        f"SELECT worker_id, lock_until FROM {table} WHERE folder_path = {ph}",
+        (folder_path,),
+    )
+
+    if existing is None:
+        # New folder — insert with the claim
+        _execute(
+            conn,
+            f"""INSERT INTO {table}
+                (folder_path, worker_id, lock_until, scan_state, first_seen_at)
+                VALUES ({ph}, {ph}, {ph}, 'SCANNING', {ph})""",
+            (folder_path, worker_id, expiry_iso, now_iso),
+        )
+        return True
+
+    # Folder exists — check if locked by someone else
+    other_lock = existing.get("lock_until")
+    if other_lock and other_lock > now_iso and existing.get("worker_id") != worker_id:
+        # Active lock by another worker
+        return False
+
+    # Either expired lock or no lock or we are the same worker — claim it
+    _execute(
+        conn,
+        f"""UPDATE {table}
+            SET worker_id = {ph}, lock_until = {ph}, scan_state = 'SCANNING'
+            WHERE folder_path = {ph}""",
+        (worker_id, expiry_iso, folder_path),
+    )
+    return True
+
+
+def release_scan_claim(conn: RepairDBConnection, folder_path: str):
+    """Release the scan lock on a folder (after scanning is done).
+
+    Clears worker_id and lock_until. Does NOT touch scan_state — the caller
+    sets that to the actual result (CLEAN / CORRUPT / etc) via upsert.
+    """
+    table = _files_table(conn)
+    ph = _ph(conn)
+    _execute(
+        conn,
+        f"UPDATE {table} SET worker_id = NULL, lock_until = NULL "
+        f"WHERE folder_path = {ph}",
+        (folder_path,),
+    )
+
+
+def get_locked_folders(conn: RepairDBConnection) -> List[Dict[str, Any]]:
+    """Return folders currently locked by some worker (for status display)."""
+    table = _files_table(conn)
+    if conn.backend == "postgres":
+        sql = f"""
+            SELECT folder_path, worker_id, lock_until
+            FROM {table}
+            WHERE lock_until IS NOT NULL AND lock_until > NOW()
+            ORDER BY lock_until DESC
+        """
+        return _fetchall(conn, sql)
+    # SQLite
+    now_iso = datetime.utcnow().isoformat() + "Z"
+    sql = f"""
+        SELECT folder_path, worker_id, lock_until
+        FROM {table}
+        WHERE lock_until IS NOT NULL AND lock_until > ?
+        ORDER BY lock_until DESC
+    """
+    return _fetchall(conn, sql, (now_iso,))

@@ -209,37 +209,69 @@ The whole point of the Postgres backend is running on multiple PCs simultaneousl
 6. **Run the exe** on each target — they'll all see the same data
 7. **Each PC scans in its own scan window**, results land in the shared DB
 
-### Important Caveats (v1.0)
+### Multi-PC Coordination
 
-The current implementation gives you:
+The Postgres backend includes **automatic work-claim distribution**:
 
 - ✅ Shared scan results visible to all PCs
 - ✅ Shared queue (queue from one PC, remediate from another)
 - ✅ Per-PC tracking via `worker_id` column
+- ✅ **Atomic folder claims** — when one PC starts scanning a folder, others
+  see it locked and skip it
+- ✅ **Automatic stale-lock recovery** — if a PC crashes mid-scan, its locks
+  expire after 60 minutes and other PCs reclaim those folders
 
-But it does NOT yet give you:
+#### How It Works
 
-- ❌ **Automatic work-claim distribution.** If two PCs both click Start Scan, they'll both walk the same library folders. The first to finish a folder writes its result; the second's later write may overwrite. This usually works out fine (same file, same result) but isn't optimal.
+When a PC starts scanning a folder:
+1. It runs an atomic INSERT/UPDATE that sets `worker_id=<this-pc>`,
+   `lock_until=now+60min`, `scan_state=SCANNING`
+2. The conditional WHERE clause ensures the claim only succeeds if no other
+   active lock exists (uses Postgres `FOR UPDATE`-equivalent semantics)
+3. If the claim fails (another PC owns it), this PC silently moves on to the
+   next folder
+4. On scan completion, the lock is released and the actual status (CLEAN /
+   CORRUPT / etc) is written
 
-To work around this until Phase 3-5 of the multi-PC plan is built (see `FUTURE.md`):
+The `SCANNING` status is visible in the GUI as a blue verdict, so you can
+see which folders are currently being processed by which PC (the `worker_id`
+column tells you).
 
-**Option A — Time-multiplex scans:**
-- Only one PC runs an active scan at a time
-- Other PCs do GUI/remediation work
+#### Safe Multi-PC Patterns
 
-**Option B — Manually partition by library root:**
+**Just run them all** — Each PC clicks Start Scan independently. They will
+naturally divide the work because they each claim folders one at a time and
+skip claimed ones. No manual partitioning needed.
+
 ```powershell
 # On ms01-a:
-.\RepairBrokenMedia.exe scan --root "Z:\Movies\A-H"
+.\RepairBrokenMedia.exe scan
 
 # On gt1-a (at the same time):
-.\RepairBrokenMedia.exe scan --root "Z:\Movies\I-S"
+.\RepairBrokenMedia.exe scan
 
-# On nyc:
-.\RepairBrokenMedia.exe scan --root "Z:\Movies\T-Z"
+# On nyc (also at the same time):
+.\RepairBrokenMedia.exe scan
 ```
 
-Each PC scans a different subtree, no overlap.
+All three PCs work in parallel against the same library, never duplicating
+work. The shared Postgres database keeps them coordinated.
+
+**Optional: partition for predictable load** — If your library is unbalanced
+(e.g., A-H is mostly small movies, T-Z has all the 4K rips), you can still
+manually partition to balance the workload:
+
+```powershell
+# Fast PC handles the slow library section:
+.\RepairBrokenMedia.exe scan --root "Z:\Movies\T-Z"
+
+# Other PCs share the rest:
+.\RepairBrokenMedia.exe scan --root "Z:\Movies\A-H"
+.\RepairBrokenMedia.exe scan --root "Z:\Movies\I-S"
+```
+
+Even with overlap, the claim system prevents wasted work — but partitioning
+helps each PC's progress bar stay focused on its assigned subtree.
 
 ---
 
