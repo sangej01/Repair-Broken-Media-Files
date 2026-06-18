@@ -240,3 +240,13 @@ def mark_skipped(conn: sqlite3.Connection, folder_path: str):
         WHERE folder_path = ?
     """, (now, folder_path))
     conn.commit()
+
+
+def mark_none(conn: sqlite3.Connection, folder_path: str):
+    """Reset remediation state to NONE (remove from queue, undo skip, etc.)."""
+    now = datetime.utcnow().isoformat()
+    conn.execute("""
+        UPDATE files SET remediation = 'NONE', remediation_at = ?
+        WHERE folder_path = ?
+    """, (now, folder_path))
+    conn.commit()

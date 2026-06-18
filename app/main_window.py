@@ -919,12 +919,25 @@ class MainWindow(QMainWindow):
         
         menu.addSeparator()
         
-        # Only show queue/remediate for corrupt files
-        if verdict == "CORRUPT":
+        # Get current remediation state
+        state_item = self._table.item(current_row, COL_STATE)
+        remed_state = state_item.text() if state_item else "NONE"
+        
+        # Queue/unqueue actions based on current state
+        if verdict == "CORRUPT" and remed_state == "NONE":
             queue_action = menu.addAction("➕ Queue for Remediation")
             queue_action.triggered.connect(lambda: self._queue_single(path))
-            
             menu.addSeparator()
+        elif remed_state == "QUEUED":
+            unqueue_action = menu.addAction("➖ Remove from Queue")
+            unqueue_action.triggered.connect(lambda: self._unqueue_single(path))
+            menu.addSeparator()
+        
+        # Mark as Skipped (for any state)
+        skip_action = menu.addAction("🚫 Mark as Skipped")
+        skip_action.triggered.connect(lambda: self._skip_single(path))
+        
+        menu.addSeparator()
         
         # Copy path
         copy_action = menu.addAction("📋 Copy Path")
@@ -939,6 +952,22 @@ class MainWindow(QMainWindow):
         self._refresh_table()
         folder_name = Path(path).name
         self._progress_label.setText(f"Queued: {folder_name}")
+    
+    @Slot()
+    def _unqueue_single(self, path: str):
+        """Remove a single file from the queue (back to NONE)."""
+        db.mark_none(self._db_conn, path)
+        self._refresh_table()
+        folder_name = Path(path).name
+        self._progress_label.setText(f"Removed from queue: {folder_name}")
+    
+    @Slot()
+    def _skip_single(self, path: str):
+        """Mark a single file as skipped."""
+        db.mark_skipped(self._db_conn, path)
+        self._refresh_table()
+        folder_name = Path(path).name
+        self._progress_label.setText(f"Skipped: {folder_name}")
     
     @Slot()
     def _copy_path(self, path: str):
