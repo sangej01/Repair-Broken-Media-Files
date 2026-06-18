@@ -327,17 +327,18 @@ python main.py remediate --max 10
 
 ## Status Indicators Cheat Sheet
 
-### Verdict (Scan Result)
+### Status (Scan Result)
 
-| Symbol | Verdict | Meaning | Action |
-|--------|---------|---------|--------|
+| Symbol | Status | Meaning | Action |
+|--------|--------|---------|--------|
 | 🟢 | CLEAN | File passed integrity check | Ignore |
 | 🔴 | **CORRUPT** | Has structural corruption | **Queue + Remediate** |
 | 🟡 | ERROR | ffmpeg couldn't process (real error) | Investigate manually |
 | 🟠 | TIMEOUT | Scan exceeded timeout (file too big/NAS slow) | **Don't remediate!** Will auto-rescan |
 | 🟣 | MISSING | Folder no longer exists on disk | Verify or delete record |
 | ⚪ | EMPTY | No video file in folder | Usually safe to delete |
-| ⏳ | SCANNING | Scan in progress | Wait |
+| ⚫ | UNKNOWN | Discovered but not yet scanned (or reset for retry) | Will scan on next run |
+| ⏳ | SCANNING | Scan currently in progress | Wait |
 
 ### Remediation State
 

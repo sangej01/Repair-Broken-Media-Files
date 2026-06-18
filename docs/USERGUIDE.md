@@ -189,25 +189,28 @@ The app has two view modes accessible via the dropdown at the top:
 - **☐** - Checkbox for bulk selection
 - **Folder** - Movie folder name
 - **Size** - File size (sortable numerically)
-- **Verdict** - Scan result (CLEAN/CORRUPT/etc.)
+- **Status** - Scan result (CLEAN/CORRUPT/etc.)
 - **Reason** - ffmpeg error details (for non-CLEAN files)
-- **State** - Remediation state (NONE/QUEUED/DELETED/etc.)
+- **Remediation** - Remediation state (NONE/QUEUED/DELETED/etc.)
 - **Attempts** - Number of remediation attempts:
   - 0 = Never remediated
   - 1 = Remediated once
   - 2 = ⚠️ Bold orange - second attempt (something's wrong)
   - 3+ = 🔴 Bold red - persistent issue (systematic problem!)
 
-#### Verdict Colors:
+#### Status Colors:
 - 🟢 **CLEAN** (green) - File passed integrity check
 - 🔴 **CORRUPT** (red, bold) - File has structural corruption
 - 🟡 **ERROR** (yellow) - ffmpeg couldn't process file (real error)
 - 🟠 **TIMEOUT** (orange) - Scan exceeded timeout - file too large or NAS too slow
 - 🟣 **MISSING** (purple) - Folder no longer exists on disk
 - ⚪ **EMPTY** (grey) - No video file found in folder
+- ⚫ **UNKNOWN** (default) - Folder discovered but not yet scanned, OR a previous failed scan that's been reset for retry
+
+**Note about UNKNOWN:** This is a transient state - movies in this state will be picked up by the next scan. You shouldn't normally see many UNKNOWN entries unless you've reset failed scans or just discovered new folders.
 
 #### Filtering:
-- **Filter dropdown:** Show only CORRUPT, CLEAN, ERROR, TIMEOUT, MISSING, EMPTY, or All
+- **Status dropdown:** Show only CORRUPT, CLEAN, ERROR, TIMEOUT, MISSING, EMPTY, UNKNOWN, or All
 - **Remediation dropdown:** Filter by NONE, QUEUED, DELETED, REMEDIATED, SKIPPED
 - **Search box:** Type to filter by folder name
 

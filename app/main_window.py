@@ -50,12 +50,16 @@ import db
 COL_SELECT = 0
 COL_FOLDER = 1
 COL_SIZE = 2
-COL_VERDICT = 3
+COL_STATUS = 3      # Was VERDICT - scan status (CLEAN/CORRUPT/etc.)
 COL_REASON = 4
-COL_STATE = 5
+COL_REMEDIATION = 5 # Was STATE - remediation state (NONE/QUEUED/etc.)
 COL_ATTEMPTS = 6
 
-HEADERS = ["", "Folder", "Size", "Verdict", "Reason", "State", "Attempts"]
+# Backward compatibility aliases (in case any code still uses old names)
+COL_VERDICT = COL_STATUS
+COL_STATE = COL_REMEDIATION
+
+HEADERS = ["", "Folder", "Size", "Status", "Reason", "Remediation", "Attempts"]
 
 # State colors (Catppuccin Mocha palette)
 STATE_COLORS = {
@@ -212,7 +216,7 @@ class MainWindow(QMainWindow):
         filter_row = QHBoxLayout()
         filter_row.setSpacing(8)
         
-        filter_row.addWidget(QLabel("Filter:"))
+        filter_row.addWidget(QLabel("Status:"))
         self._filter_combo = QComboBox()
         self._filter_combo.addItems(["All", "CORRUPT", "CLEAN", "ERROR", "TIMEOUT", "EMPTY", "MISSING", "UNKNOWN"])
         self._filter_combo.currentTextChanged.connect(self._apply_filter)
