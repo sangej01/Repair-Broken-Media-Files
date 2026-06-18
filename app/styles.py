@@ -187,8 +187,9 @@ QSpinBox {
     color: #e8e8e8;
     border: 1px solid #2e2e48;
     border-radius: 6px;
-    padding: 4px 8px;
+    padding: 4px 4px 4px 8px;
     font-size: 13px;
+    min-height: 24px;
 }
 
 QSpinBox:hover {
