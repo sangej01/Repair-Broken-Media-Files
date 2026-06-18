@@ -53,8 +53,9 @@ COL_SIZE = 2
 COL_VERDICT = 3
 COL_REASON = 4
 COL_STATE = 5
+COL_ATTEMPTS = 6
 
-HEADERS = ["", "Folder", "Size", "Verdict", "Reason", "State"]
+HEADERS = ["", "Folder", "Size", "Verdict", "Reason", "State", "Attempts"]
 
 # State colors (Catppuccin Mocha palette)
 STATE_COLORS = {
@@ -253,6 +254,7 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(COL_VERDICT, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(COL_REASON, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(COL_STATE, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(COL_ATTEMPTS, QHeaderView.ResizeMode.ResizeToContents)
         
         self._table.setColumnWidth(COL_SELECT, 40)
         
@@ -453,6 +455,21 @@ class MainWindow(QMainWindow):
         remed_item = QTableWidgetItem(remed)
         remed_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         self._table.setItem(row, COL_STATE, remed_item)
+        
+        # Attempts (use numeric sort)
+        attempts = file_dict.get("attempts", 0) or 0
+        attempts_item = NumericTableWidgetItem(str(attempts))
+        attempts_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        attempts_item.setData(Qt.ItemDataRole.UserRole + 1, attempts)
+        # Highlight if multiple attempts (indicates persistent issue)
+        if attempts >= 2:
+            font = attempts_item.font()
+            font.setBold(True)
+            attempts_item.setFont(font)
+            attempts_item.setForeground(QColor("#fab387"))  # Orange warning
+        if attempts >= 3:
+            attempts_item.setForeground(QColor("#f38ba8"))  # Red - serious!
+        self._table.setItem(row, COL_ATTEMPTS, attempts_item)
         
         # Store full path in user data
         folder_item.setData(Qt.ItemDataRole.UserRole, file_dict["folder_path"])
@@ -761,6 +778,20 @@ class MainWindow(QMainWindow):
                 reason = (file_record.get("stderr_tail") or "")[:60]
                 reason_item.setText(reason)
             
+            # Update attempts
+            attempts_item = self._table.item(row, COL_ATTEMPTS)
+            if attempts_item:
+                attempts = file_record.get("attempts", 0) or 0
+                attempts_item.setText(str(attempts))
+                attempts_item.setData(Qt.ItemDataRole.UserRole + 1, attempts)
+                if attempts >= 2:
+                    font = attempts_item.font()
+                    font.setBold(True)
+                    attempts_item.setFont(font)
+                    attempts_item.setForeground(QColor("#fab387"))
+                if attempts >= 3:
+                    attempts_item.setForeground(QColor("#f38ba8"))
+            
             break
     
     @Slot(dict)
@@ -947,7 +978,7 @@ class MainWindow(QMainWindow):
         
         # Delete record from database (only for MISSING)
         if remed_state != "DELETING" and (verdict == "MISSING" or remed_state in ("FAILED", "SKIPPED")):
-            delete_record_action = menu.addAction("🗑️ Delete from Database")
+            delete_record_action = menu.addAction("🗑️ Delete from SQLite Database")
             delete_record_action.triggered.connect(lambda: self._delete_record_single(path))
         
         menu.addSeparator()
@@ -1006,10 +1037,14 @@ class MainWindow(QMainWindow):
         folder_name = Path(path).name
         reply = QMessageBox.question(
             self,
-            "Delete Database Record",
-            f"⚠️ Permanently delete database record for:\n\n{folder_name}\n\n"
-            f"This does NOT delete any files on disk.\n"
-            f"It only removes the record from repair.db.\n\n"
+            "Delete from SQLite Database",
+            f"⚠️ Permanently delete record from this tool's local SQLite database:\n\n"
+            f"{folder_name}\n\n"
+            f"This affects ONLY repair.db (this tool's tracking database).\n"
+            f"It does NOT touch:\n"
+            f"  • Files on disk\n"
+            f"  • Radarr database\n"
+            f"  • Any other tool\n\n"
             f"Continue?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )

@@ -21,6 +21,9 @@ Scan your movie library for structurally corrupted files and remediate them auto
 - ✅ **SQLite Tracking** - Resumable scans, full audit trail
 - ✅ **Radarr Integration** - Automated delete + re-search workflow
 - ✅ **Pluck Integration** - VERIFY_LEVEL=3 prevents re-acquiring bad files
+- ✅ **Attempts Tracking** - Visual warnings for movies that fail repeatedly (systemic issue detection)
+- ✅ **Adaptive Timeout** - 2 min/GB minimum (handles large 4K files automatically)
+- ✅ **Multiple Scan States** - CLEAN/CORRUPT/ERROR/TIMEOUT/MISSING/EMPTY for accurate categorization
 
 ---
 
@@ -104,7 +107,7 @@ Movies appear with "SCANNING" state
          ↓
 Live timer: "⏱ Scanning: Movie Name (2m 15s)"
          ↓
-Results: CLEAN | CORRUPT | ERROR | EMPTY
+Results: CLEAN | CORRUPT | ERROR | TIMEOUT | MISSING | EMPTY
 ```
 
 ### 2. Queue
@@ -248,7 +251,16 @@ Resumable scans (skips folders scanned < 7 days ago unless `--rescan`).
 ## State Machine
 
 ### Scan States
-`UNKNOWN → [CLEAN | CORRUPT | ERROR | EMPTY]`
+`UNKNOWN → [CLEAN | CORRUPT | ERROR | TIMEOUT | MISSING | EMPTY]`
+
+| State | Color | Meaning |
+|-------|-------|---------|
+| 🟢 CLEAN | Green | File is fine |
+| 🔴 CORRUPT | Red (bold) | Has structural corruption |
+| 🟡 ERROR | Yellow | ffmpeg couldn't process (real error) |
+| 🟠 TIMEOUT | Orange | Scan timed out (file too large/NAS slow) |
+| 🟣 MISSING | Purple | Folder no longer exists on disk |
+| ⚪ EMPTY | Grey | No video file found |
 
 ### Remediation States
 `NONE → QUEUED → DELETED → RESEARCHING → [REMEDIATED | FAILED]`

@@ -183,7 +183,20 @@ Error opening output file
 
 ### Has this movie been remediated before?
 
-The database tracks `attempts`. Right-click → properties (or check via CLI):
+Look at the **Attempts** column in the table:
+- **0** - Never remediated
+- **1** - First time
+- **2** - ⚠️ Second attempt (something went wrong before)
+- **3+** - 🔴 Persistent issue - investigate before remediating again!
+
+Multiple attempts often indicate:
+- Indexer keeps providing the same bad release
+- Pluck Movies rsync corruption (transfer-time issue)
+- Upstream source is bad (the original encode is broken)
+
+**If attempts >= 3, stop and investigate** before queuing another remediation cycle.
+
+You can also check via CLI:
 ```powershell
 python main.py list --corrupt
 ```
@@ -194,6 +207,58 @@ Currently you can see the current state. The full history is in the SQLite datab
 ```powershell
 sqlite3 repair.db "SELECT folder_path, scan_state, remediation, attempts FROM files WHERE folder_path LIKE '%movie name%'"
 ```
+
+---
+
+## Identifying Systemic Issues with Attempts Column
+
+The **Attempts** column tracks how many times you've remediated a movie. Use it to spot patterns:
+
+### Pattern 1: Single Movie, High Attempts
+**Symptom:** One movie keeps showing CORRUPT after multiple remediations
+
+**Likely causes:**
+- Indexer keeps grabbing the same bad release
+- Source release is fundamentally broken
+- Pluck Movies has rsync issue specifically with this file
+
+**Action:**
+1. Check the ffmpeg log - does the corruption pattern look the same?
+2. If yes → blacklist this release in Radarr (when v2 has blocklist support)
+3. Try manually finding a different release source
+4. Or mark as SKIPPED and accept the loss
+
+### Pattern 2: Many Movies, All Attempts=2
+**Symptom:** Lots of movies showing 2 attempts, all freshly corrupt
+
+**Likely causes:**
+- **Pluck Movies rsync issue** - silently corrupting during NAS transfer
+- SAB/par2 silent failure (the original 28YL pattern)
+- Network instability during transfer
+
+**Action:**
+1. Stop bulk remediation - you'll just keep churning
+2. Investigate Pluck Movies workflow
+3. Check Pluck VERIFY_LEVEL=3 (should catch corruption pre-import)
+4. Test rsync integrity manually
+
+### Pattern 3: Attempts=1, Then Stays Clean
+**Symptom:** Healthy remediation cycle - this is normal!
+
+**Action:** Keep going! The system is working.
+
+### Sorting by Attempts
+
+Click the **Attempts** column header to sort by attempt count:
+- Descending: See worst offenders first
+- Use this view to identify movies that may have systemic issues
+
+### Color Coding
+
+The Attempts column uses colors to draw attention:
+- **Plain (0-1)** - Normal
+- **Bold orange (2)** - ⚠️ Worth checking
+- **Bold red (3+)** - 🚨 Stop and investigate!
 
 ---
 
@@ -264,13 +329,15 @@ python main.py remediate --max 10
 
 ### Verdict (Scan Result)
 
-| Symbol | Verdict | Meaning |
-|--------|---------|---------|
-| 🟢 | CLEAN | File passed integrity check - ignore |
-| 🔴 | **CORRUPT** | Has structural corruption - **fix this** |
-| 🟡 | ERROR | ffmpeg couldn't process - investigate manually |
-| ⚪ | EMPTY | No video file in folder - usually safe to delete |
-| ⏳ | SCANNING | Scan in progress |
+| Symbol | Verdict | Meaning | Action |
+|--------|---------|---------|--------|
+| 🟢 | CLEAN | File passed integrity check | Ignore |
+| 🔴 | **CORRUPT** | Has structural corruption | **Queue + Remediate** |
+| 🟡 | ERROR | ffmpeg couldn't process (real error) | Investigate manually |
+| 🟠 | TIMEOUT | Scan exceeded timeout (file too big/NAS slow) | **Don't remediate!** Will auto-rescan |
+| 🟣 | MISSING | Folder no longer exists on disk | Verify or delete record |
+| ⚪ | EMPTY | No video file in folder | Usually safe to delete |
+| ⏳ | SCANNING | Scan in progress | Wait |
 
 ### Remediation State
 

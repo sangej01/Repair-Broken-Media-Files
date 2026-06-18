@@ -185,16 +185,37 @@ The app has two view modes accessible via the dropdown at the top:
 
 ### 2. Reviewing Results
 
+#### Table Columns:
+- **☐** - Checkbox for bulk selection
+- **Folder** - Movie folder name
+- **Size** - File size (sortable numerically)
+- **Verdict** - Scan result (CLEAN/CORRUPT/etc.)
+- **Reason** - ffmpeg error details (for non-CLEAN files)
+- **State** - Remediation state (NONE/QUEUED/DELETED/etc.)
+- **Attempts** - Number of remediation attempts:
+  - 0 = Never remediated
+  - 1 = Remediated once
+  - 2 = ⚠️ Bold orange - second attempt (something's wrong)
+  - 3+ = 🔴 Bold red - persistent issue (systematic problem!)
+
 #### Verdict Colors:
 - 🟢 **CLEAN** (green) - File passed integrity check
 - 🔴 **CORRUPT** (red, bold) - File has structural corruption
-- 🟡 **ERROR** (yellow) - ffmpeg couldn't process file
+- 🟡 **ERROR** (yellow) - ffmpeg couldn't process file (real error)
+- 🟠 **TIMEOUT** (orange) - Scan exceeded timeout - file too large or NAS too slow
+- 🟣 **MISSING** (purple) - Folder no longer exists on disk
 - ⚪ **EMPTY** (grey) - No video file found in folder
 
 #### Filtering:
-- **Filter dropdown:** Show only CORRUPT, CLEAN, ERROR, EMPTY, or All
+- **Filter dropdown:** Show only CORRUPT, CLEAN, ERROR, TIMEOUT, MISSING, EMPTY, or All
 - **Remediation dropdown:** Filter by NONE, QUEUED, DELETED, REMEDIATED, SKIPPED
 - **Search box:** Type to filter by folder name
+
+#### Why Attempts Matter:
+If a movie shows **2+ attempts**, it means the remediation cycle is failing repeatedly:
+- Same release being downloaded again? → Indexer needs different release
+- New copy still corrupt? → Possible upstream issue (Pluck rsync, indexer source)
+- 3+ attempts: **Stop and investigate** - there's a systematic problem
 
 #### Viewing Details:
 1. Click on a movie
@@ -251,12 +272,25 @@ pipenv run python main.py queue --all-corrupt
 
 ## Right-Click Context Menu
 
-Right-click on any movie row to access:
+Right-click on any movie row to access (menu items vary by current state):
 
+**Always available:**
 - **📁 Open Folder** - Opens folder in Windows Explorer
-- **📄 Show ffmpeg Log** - View corruption details
-- **➕ Queue for Remediation** - Quick queue (CORRUPT files only)
+- **📄 Show ffmpeg Log** - View corruption details / scan output
+- **🚫 Mark as Skipped** - Don't remediate this one
+- **🔍 Verify Folder Exists** - Check if folder is still on disk
 - **📋 Copy Path** - Copy folder path to clipboard
+
+**For CORRUPT files (state=NONE):**
+- **➕ Queue for Remediation** - Add to remediation queue
+
+**For QUEUED files:**
+- **➖ Remove from Queue** - Reset to NONE (cancels the queue)
+
+**For MISSING / FAILED / SKIPPED records:**
+- **🗑️ Delete from SQLite Database** - Remove stale record
+  - Only affects this tool's local `repair.db`
+  - Does NOT touch files on disk or Radarr database
 
 ---
 
@@ -331,7 +365,7 @@ pipenv run python main.py remediate --max 5
 
 #### `files` Table
 - `folder_path` - Unique path to movie folder
-- `scan_state` - UNKNOWN | CLEAN | CORRUPT | ERROR | EMPTY
+- `scan_state` - UNKNOWN | CLEAN | CORRUPT | ERROR | TIMEOUT | MISSING | EMPTY
 - `remediation` - NONE | QUEUED | DELETED | RESEARCHING | REMEDIATED | FAILED | SKIPPED
 - `stderr_tail` - Last 400 chars of ffmpeg stderr
 - `last_scan_at` - ISO8601 timestamp
@@ -378,6 +412,26 @@ pipenv run python main.py remediate --max 5
 - Increase workers: 4-8 for faster scanning
 - Check NAS network speed
 - Ensure no other heavy disk activity
+
+### Files marked as TIMEOUT
+
+**Cause:** Scan took longer than the per-file timeout (adaptive: 2 min/GB minimum).
+
+**Important:** TIMEOUT does NOT mean the file is corrupt. The scan just gave up early.
+
+**Solution:**
+- TIMEOUT files are auto-rescanned on next scan (no manual action needed)
+- If they keep timing out: huge 4K files on slow NAS - normal
+- DO NOT queue TIMEOUT files for remediation (they may not be corrupt!)
+
+### Files marked as MISSING
+
+**Cause:** The folder no longer exists on disk (you deleted it, moved it, or NAS unavailable).
+
+**Solution:**
+- Right-click → "🔍 Verify Folder Exists" to recheck
+- If truly gone: Right-click → "🗑️ Delete from SQLite Database" to clean up the record
+- Database records are not auto-removed - keeps history of what you had
 
 ### App won't close
 
@@ -497,10 +551,16 @@ RADARR_API=your-api-key-here
         ↓
    [Scan runs]
         ↓
-    ┌───┴────┬────────┬───────┐
-    ↓        ↓        ↓       ↓
-  CLEAN  CORRUPT  ERROR   EMPTY
+    ┌──────┬─────────┬────────┬─────────┬────────┬─────────┐
+    ↓      ↓         ↓        ↓         ↓        ↓         ↓
+  CLEAN CORRUPT   ERROR   TIMEOUT   MISSING   EMPTY    UNKNOWN
+                                  (deleted)            (will retry)
 ```
+
+**Auto-Rescan Logic:**
+- CLEAN, CORRUPT, EMPTY, MISSING → Skip if scanned within 7 days (definitive)
+- ERROR, TIMEOUT, UNKNOWN → Always rescan (failed attempts)
+
 
 ### Remediation States
 
