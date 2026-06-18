@@ -154,12 +154,22 @@ def null_decode(video_path: Path, timeout_sec: int = 1800, progress_callback=Non
     """
     Run ffmpeg null-decode to detect corruption.
     Returns: (scan_state, stderr_tail, elapsed_sec)
-    scan_state is one of: CLEAN, CORRUPT, ERROR
+    scan_state is one of: CLEAN, CORRUPT, ERROR, TIMEOUT
     
     progress_callback: optional function(elapsed_sec) called periodically during scan
     """
     start = time.time()
     proc = None
+    
+    # Adjust timeout based on file size for large files
+    # Rough estimate: 1 minute per GB minimum, with floor of timeout_sec
+    try:
+        file_size_gb = video_path.stat().st_size / (1024**3)
+        # Allow 2 minutes per GB for slow NAS, with min of timeout_sec
+        adaptive_timeout = max(timeout_sec, int(file_size_gb * 120))
+        timeout_sec = adaptive_timeout
+    except Exception:
+        pass  # Use default if we can't stat
     
     try:
         # Start ffmpeg process without waiting
@@ -189,7 +199,8 @@ def null_decode(video_path: Path, timeout_sec: int = 1800, progress_callback=Non
                     proc.wait(timeout=5)
                 except:
                     pass
-                return "ERROR", f"TIMEOUT after {timeout_sec}s", elapsed
+                # Use TIMEOUT state (not ERROR) so users can rescan with longer timeout
+                return "TIMEOUT", f"TIMEOUT after {timeout_sec}s (file may be too large for current timeout)", elapsed
             
             # Emit progress callback
             if progress_callback:

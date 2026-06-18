@@ -61,6 +61,7 @@ STATE_COLORS = {
     "CLEAN": "#a6e3a1",     # Green
     "CORRUPT": "#f38ba8",   # Red
     "ERROR": "#f9e2af",     # Yellow
+    "TIMEOUT": "#fab387",   # Orange (different from ERROR - file just took too long)
     "EMPTY": "#6c7086",     # Grey
     "REMEDIATED": "#94e2d5", # Teal
     "SKIPPED": "#585b70",   # Dark grey
@@ -211,7 +212,7 @@ class MainWindow(QMainWindow):
         
         filter_row.addWidget(QLabel("Filter:"))
         self._filter_combo = QComboBox()
-        self._filter_combo.addItems(["All", "CORRUPT", "CLEAN", "ERROR", "EMPTY", "UNKNOWN"])
+        self._filter_combo.addItems(["All", "CORRUPT", "CLEAN", "ERROR", "TIMEOUT", "EMPTY", "UNKNOWN"])
         self._filter_combo.currentTextChanged.connect(self._apply_filter)
         self._filter_combo.setFixedWidth(120)
         filter_row.addWidget(self._filter_combo)
