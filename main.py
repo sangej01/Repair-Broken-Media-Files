@@ -306,12 +306,16 @@ def cli_benchmark(args):
             "PCs) so the benchmark sees the full available bandwidth."
         )
     )
-    parser.add_argument("--limit", type=int, default=8,
-                        help="Number of folders to scan per pass (default: 8)")
-    parser.add_argument("--workers", type=str, default="1,2,4,6,8",
-                        help="Comma-separated worker counts to test (default: 1,2,4,6,8)")
+    parser.add_argument("--limit", type=int, default=4,
+                        help="Number of folders to scan per pass (default: 4)")
+    parser.add_argument("--workers", type=str, default="1,2,4",
+                        help="Comma-separated worker counts to test (default: 1,2,4)")
     parser.add_argument("--root", action="append",
                         help="Library root to scan (repeatable, defaults to all from config)")
+    parser.add_argument("--max-file-gb", type=float, default=10.0,
+                        help="Skip folders whose largest file exceeds this size in GB "
+                             "(default: 10). Use 0 to disable. Bigger files give the same "
+                             "throughput data but make the benchmark take much longer.")
     parser.add_argument("--yes", "-y", action="store_true",
                         help="Skip the interactive confirmation about other scans")
     opts = parser.parse_args(args)
@@ -327,13 +331,81 @@ def cli_benchmark(args):
     else:
         roots = config.get_library_roots()
 
-    # Pre-flight warning + confirmation
     print("=" * 70)
     print(" BENCHMARK MODE")
     print("=" * 70)
     print()
     print("This will scan the same folders multiple times to measure throughput.")
-    print("Estimated time: a few minutes (depends on file sizes and worker counts).")
+    print()
+
+    # Discover candidates and pre-screen for size so the benchmark stays fast.
+    print("Discovering candidate folders...")
+    all_folders = scanner._enumerate_movie_folders(roots)
+    if not all_folders:
+        print("ERROR: no folders found in any library root", file=sys.stderr)
+        sys.exit(1)
+
+    # Walk folders in order, picking ones whose largest video fits the size
+    # cap. We need exactly --limit folders so we keep walking until satisfied
+    # or run out of candidates.
+    max_bytes = int(opts.max_file_gb * (1024 ** 3)) if opts.max_file_gb > 0 else 0
+    test_folders = []
+    test_folder_sizes = []  # parallel list of largest-file sizes
+    skipped_too_big = 0
+
+    print(f"Selecting {opts.limit} folder(s) "
+          f"{'(no size limit)' if max_bytes == 0 else f'with files <= {opts.max_file_gb:.1f} GB'}...")
+
+    for folder in all_folders:
+        if len(test_folders) >= opts.limit:
+            break
+        video = scanner.largest_video_in_folder(folder)
+        if video is None:
+            continue
+        try:
+            size = video.stat().st_size
+        except OSError:
+            continue
+        if max_bytes and size > max_bytes:
+            skipped_too_big += 1
+            continue
+        test_folders.append(folder)
+        test_folder_sizes.append(size)
+
+    if not test_folders:
+        print("ERROR: no folders passed the size filter. Try --max-file-gb 0 "
+              "to disable, or pick a different --root.", file=sys.stderr)
+        sys.exit(1)
+
+    if len(test_folders) < opts.limit:
+        print(f"WARNING: only found {len(test_folders)} folder(s) within size cap "
+              f"(wanted {opts.limit}). Skipped {skipped_too_big} oversized folder(s).")
+
+    total_bytes = sum(test_folder_sizes)
+    total_gb = total_bytes / (1024 ** 3)
+    n_passes = len(worker_counts)
+    total_data_gb = total_gb * n_passes
+
+    # Rough time estimate: 1 GbE NAS = ~110 MB/s sustained.
+    # Total time = total bytes read / effective throughput. With workers > 1
+    # the throughput per pass approximates the link bandwidth, so total time
+    # is roughly (data per pass / link bw) * n_passes for the best case, plus
+    # the overhead of the 1-worker pass that doesn't parallelize.
+    secs_per_gb = 9.0  # ~110 MB/s -> ~9 seconds per GB
+    est_secs = (total_gb * secs_per_gb) * (n_passes + 1)  # rough upper bound
+    est_min = max(1, int(est_secs / 60))
+
+    print()
+    print(f"Will benchmark with {len(test_folders)} folder(s):")
+    for folder, size in zip(test_folders, test_folder_sizes):
+        size_gb = size / (1024 ** 3)
+        print(f"  - {folder.name}  ({size_gb:.1f} GB)")
+    print()
+    print(f"Total per pass: {total_gb:.1f} GB across {len(test_folders)} files")
+    print(f"Number of passes: {n_passes} (worker counts: {worker_counts})")
+    print(f"Total data to read: ~{total_data_gb:.0f} GB")
+    print(f"Rough time estimate: ~{est_min} minute(s) on a 1 GbE link "
+          f"(actual time depends on file size and codec)")
     print()
     print("BEFORE STARTING, please stop these to avoid skewing results:")
     print("  - Close the Repair Broken Media Files GUI on THIS PC")
@@ -353,20 +425,6 @@ def cli_benchmark(args):
         if answer not in ("y", "yes"):
             print("Aborted.")
             return
-
-    # We need a clean list of folders to test.
-    print()
-    print("Discovering test folders...")
-    candidate_folders = scanner._enumerate_movie_folders(roots)
-    if not candidate_folders:
-        print("ERROR: no folders found in any library root", file=sys.stderr)
-        sys.exit(1)
-    test_folders = candidate_folders[: opts.limit]
-    print(f"Will benchmark with {len(test_folders)} folders:")
-    for f in test_folders[:5]:
-        print(f"  - {f.name}")
-    if len(test_folders) > 5:
-        print(f"  ... and {len(test_folders) - 5} more")
     print()
 
     # Use a temporary isolated SQLite DB so we don't pollute real state.
@@ -398,7 +456,7 @@ def cli_benchmark(args):
                 db_conn=conn,
                 progress_callback=None,
                 rescan=True,  # always rescan for fair benchmark
-                limit=len(test_folders),
+                folders=test_folders,  # use exactly our pre-screened list
             )
             elapsed = time.time() - start
             conn.close()

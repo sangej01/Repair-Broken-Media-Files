@@ -6,7 +6,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Optional, Tuple, Callable
+from typing import Optional, Tuple, Callable, List
 from datetime import datetime, timedelta
 
 import db
@@ -276,10 +276,11 @@ def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional
                  file_progress_callback: Optional[Callable] = None,
                  scan_start_callback: Optional[Callable] = None,
                  cancel_flag: Optional[Callable] = None,
-                 rescan: bool = False, limit: Optional[int] = None, timeout_sec: int = 1800):
+                 rescan: bool = False, limit: Optional[int] = None, timeout_sec: int = 1800,
+                 folders: Optional[List[Path]] = None):
     """
     Scan library folders for corruption.
-    - roots: list of Path objects
+    - roots: list of Path objects (used to enumerate folders unless `folders` is given)
     - workers: concurrent ffmpeg workers
     - db_conn: sqlite3.Connection
     - progress_callback: optional function(current, total, folder_name, state) - called after each folder completes
@@ -289,6 +290,8 @@ def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional
     - rescan: if False, skip folders with recent last_scan_at (< 7 days)
     - limit: optional max folders to scan (for testing)
     - timeout_sec: per-file ffmpeg timeout
+    - folders: optional explicit list of Path objects to scan instead of enumerating
+               from `roots`. Useful for benchmarks or targeted re-scans.
     
     Returns: dict with scan stats (folders_total, folders_done, clean_count, corrupt_count, error_count, empty_count)
     """
@@ -315,10 +318,13 @@ def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional
     except Exception:
         pass
 
-    # Enumerate all folders
-    folders = _enumerate_movie_folders(roots)
-    total = len(folders)
-    
+    # Enumerate all folders (or use the explicit list passed in)
+    if folders is not None:
+        all_folders = list(folders)
+    else:
+        all_folders = _enumerate_movie_folders(roots)
+    total = len(all_folders)
+
     if progress_callback:
         progress_callback(0, total, "", "discovery")
     
@@ -366,7 +372,7 @@ def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional
         # The atomic claim will still protect us at scan time.
         pass
 
-    todo = [f for f in folders if str(f) not in skip_paths]
+    todo = [f for f in all_folders if str(f) not in skip_paths]
     
     if limit:
         todo = todo[:limit]
