@@ -302,14 +302,31 @@ def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional
     # Filter out recently scanned folders if not rescanning
     # IMPORTANT: TIMEOUT and ERROR states are always re-scanned (failed attempts)
     if not rescan:
-        cutoff = (datetime.utcnow() - timedelta(days=7)).isoformat()
+        cutoff_dt = datetime.utcnow() - timedelta(days=7)
         existing = db.get_files(db_conn)
         # Skip folder only if: scanned recently AND result was definitive (not TIMEOUT/ERROR)
-        recent_scans = {
-            r["folder_path"] for r in existing 
-            if r.get("last_scan_at") and r["last_scan_at"] > cutoff
-            and r.get("scan_state") not in ("TIMEOUT", "ERROR", "UNKNOWN")
-        }
+        # last_scan_at can be either a string (SQLite ISO text) or a datetime (Postgres TIMESTAMPTZ),
+        # so normalize both sides to datetime objects before comparing.
+        recent_scans = set()
+        for r in existing:
+            last_scan = r.get("last_scan_at")
+            if not last_scan:
+                continue
+            if r.get("scan_state") in ("TIMEOUT", "ERROR", "UNKNOWN"):
+                continue
+            # Normalize to naive UTC datetime
+            if isinstance(last_scan, str):
+                try:
+                    last_dt = datetime.fromisoformat(last_scan.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+            else:
+                last_dt = last_scan
+            # Strip timezone info for comparison (cutoff_dt is naive UTC)
+            if last_dt.tzinfo is not None:
+                last_dt = last_dt.replace(tzinfo=None)
+            if last_dt > cutoff_dt:
+                recent_scans.add(r["folder_path"])
         todo = [f for f in folders if str(f) not in recent_scans]
     else:
         todo = folders
