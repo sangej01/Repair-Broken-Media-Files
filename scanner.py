@@ -1,0 +1,477 @@
+"""Video file scanner - null-decode corruption detection."""
+import os
+import subprocess
+import sys
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+from typing import Optional, Tuple, Callable
+from datetime import datetime, timedelta
+
+import db
+
+
+# Global tracking of active ffmpeg processes
+_active_processes: list = []
+_active_processes_lock = threading.Lock()
+
+
+def _register_process(proc):
+    """Register an ffmpeg process for tracking."""
+    with _active_processes_lock:
+        _active_processes.append(proc)
+
+
+def _unregister_process(proc):
+    """Unregister an ffmpeg process when it completes."""
+    with _active_processes_lock:
+        if proc in _active_processes:
+            _active_processes.remove(proc)
+
+
+def _kill_all_active_processes():
+    """Kill all tracked ffmpeg processes immediately."""
+    with _active_processes_lock:
+        procs_to_kill = list(_active_processes)
+        _active_processes.clear()
+    
+    for proc in procs_to_kill:
+        try:
+            # Try terminate first (SIGTERM equivalent)
+            proc.terminate()
+            try:
+                proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                # Force kill if terminate didn't work
+                proc.kill()
+                proc.wait(timeout=2)
+        except Exception:
+            # Last resort - taskkill by PID
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/PID", str(proc.pid)],
+                    capture_output=True,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    timeout=3
+                )
+            except:
+                pass
+
+
+# Lifted from library_corruption_sweep.py and Pluck Movies pipeline/common.py
+TROUBLE_KEYWORDS = (
+    "file ended prematurely",
+    "ended prematurely",
+    "non monotonically",
+    "non-monotonous",
+    "decode_slice",
+    "missing reference",
+    "could not find codec parameters",
+    "invalid as first byte of an ebml",
+    "invalid nal unit size",
+    "concealing",
+    "corrupt",
+    "truncated",
+    "packet too large",
+    "no frame",
+)
+
+VIDEO_EXTS = {".mkv", ".mp4", ".avi", ".m4v", ".wmv", ".ts", ".m2ts", ".mpg", ".mpeg"}
+IGNORE_DIR_NAMES = {"Extras", "Sample", "Featurettes", "Behind The Scenes", "Trailers"}
+
+
+def _kill_ffmpeg_processes():
+    """Aggressively kill all ffmpeg processes using multiple methods."""
+    # Method 1: taskkill (most reliable on Windows)
+    try:
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/IM", "ffmpeg.exe"],
+            capture_output=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            timeout=5
+        )
+    except Exception as e:
+        print(f"taskkill failed: {e}", file=sys.stderr)
+    
+    # Method 2: psutil if available
+    try:
+        import psutil
+        for proc in psutil.process_iter(['pid', 'name']):
+            try:
+                if proc.info['name'] and 'ffmpeg' in proc.info['name'].lower():
+                    proc.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+    except ImportError:
+        pass
+    except Exception as e:
+        print(f"psutil kill failed: {e}", file=sys.stderr)
+
+
+def _is_video(p: Path) -> bool:
+    """Check if path is a video file."""
+    return p.suffix.lower() in VIDEO_EXTS
+
+
+def largest_video_in_folder(folder: Path) -> Optional[Path]:
+    """
+    Find the largest video file in a folder.
+    Mirrors Pluck Movies and Compressor behavior.
+    """
+    best: Optional[Path] = None
+    best_size = -1
+    
+    for root, dirs, files in os.walk(folder):
+        # Prune ignored subdirs in-place so os.walk doesn't recurse into them
+        dirs[:] = [d for d in dirs if d not in IGNORE_DIR_NAMES]
+        
+        for fname in files:
+            p = Path(root) / fname
+            if not _is_video(p):
+                continue
+            try:
+                sz = p.stat().st_size
+            except OSError:
+                continue
+            if sz > best_size:
+                best_size = sz
+                best = p
+    
+    return best
+
+
+def _classify_stderr(stderr: str) -> str:
+    """Check if stderr contains trouble keywords."""
+    low = stderr.lower()
+    for kw in TROUBLE_KEYWORDS:
+        if kw in low:
+            return "CORRUPT"
+    return "CLEAN"
+
+
+def null_decode(video_path: Path, timeout_sec: int = 1800, progress_callback=None) -> Tuple[str, str, float]:
+    """
+    Run ffmpeg null-decode to detect corruption.
+    Returns: (scan_state, stderr_tail, elapsed_sec)
+    scan_state is one of: CLEAN, CORRUPT, ERROR
+    
+    progress_callback: optional function(elapsed_sec) called periodically during scan
+    """
+    start = time.time()
+    proc = None
+    
+    try:
+        # Start ffmpeg process without waiting
+        # CREATE_NEW_PROCESS_GROUP allows us to kill it properly on Windows
+        proc = subprocess.Popen(
+            ["ffmpeg", "-v", "error", "-i", str(video_path), "-f", "null", "-"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        
+        # Register for tracking so we can kill it from outside
+        _register_process(proc)
+        
+        # Poll process and emit progress updates
+        stderr_lines = []
+        while proc.poll() is None:
+            # Check if we've exceeded timeout
+            elapsed = time.time() - start
+            if elapsed > timeout_sec:
+                # Kill the process properly
+                try:
+                    proc.kill()
+                    proc.wait(timeout=5)
+                except:
+                    pass
+                return "ERROR", f"TIMEOUT after {timeout_sec}s", elapsed
+            
+            # Emit progress callback
+            if progress_callback:
+                progress_callback(elapsed)
+            
+            # Read stderr if available (non-blocking)
+            try:
+                import select
+                if hasattr(select, 'select'):
+                    # Unix-like
+                    ready, _, _ = select.select([proc.stderr], [], [], 0.5)
+                    if ready:
+                        line = proc.stderr.readline()
+                        if line:
+                            stderr_lines.append(line)
+                else:
+                    # Windows - just sleep
+                    time.sleep(0.5)
+            except:
+                # Fallback - just sleep
+                time.sleep(0.5)
+        
+        # Process completed, get remaining output
+        remaining_stderr, _ = proc.communicate()
+        if remaining_stderr:
+            stderr_lines.append(remaining_stderr)
+        
+        stderr_output = ''.join(stderr_lines)
+        
+    except FileNotFoundError:
+        return "ERROR", "ffmpeg not found on PATH", 0.0
+    except Exception as exc:
+        # Ensure process is killed if exception occurs
+        if proc and proc.poll() is None:
+            try:
+                proc.kill()
+                proc.wait(timeout=5)
+            except:
+                pass
+        return "ERROR", f"exec failure: {exc}", time.time() - start
+    finally:
+        # Always unregister the process
+        if proc:
+            _unregister_process(proc)
+    
+    elapsed = time.time() - start
+    stderr_tail = stderr_output[-400:].strip() if stderr_output else ""
+    
+    if proc.returncode != 0:
+        # ffmpeg exited non-zero -- almost always corruption it couldn't push past
+        return "CORRUPT", stderr_tail or f"ffmpeg exit {proc.returncode}", elapsed
+    
+    # Exit 0 but stderr might contain trouble keywords (the 28YL pattern)
+    verdict = _classify_stderr(stderr_output or "")
+    return verdict, stderr_tail, elapsed
+
+
+def _enumerate_movie_folders(roots: list) -> list:
+    """Return every immediate subfolder under each root."""
+    out = []
+    for root in roots:
+        root_path = Path(root) if not isinstance(root, Path) else root
+        if not root_path.exists():
+            print(f"  [skip] root missing: {root_path}", file=sys.stderr)
+            continue
+        for sub in sorted(root_path.iterdir(), key=lambda p: p.name.lower()):
+            if sub.is_dir():
+                out.append(sub)
+    return out
+
+
+def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional[Callable] = None,
+                 file_progress_callback: Optional[Callable] = None,
+                 scan_start_callback: Optional[Callable] = None,
+                 cancel_flag: Optional[Callable] = None,
+                 rescan: bool = False, limit: Optional[int] = None, timeout_sec: int = 1800):
+    """
+    Scan library folders for corruption.
+    - roots: list of Path objects
+    - workers: concurrent ffmpeg workers
+    - db_conn: sqlite3.Connection
+    - progress_callback: optional function(current, total, folder_name, state) - called after each folder completes
+    - file_progress_callback: optional function(folder_path, elapsed_sec) - called during each file scan
+    - scan_start_callback: optional function(folder_path) - called when a folder scan starts
+    - cancel_flag: optional function() -> bool - called to check if scan should be cancelled
+    - rescan: if False, skip folders with recent last_scan_at (< 7 days)
+    - limit: optional max folders to scan (for testing)
+    - timeout_sec: per-file ffmpeg timeout
+    
+    Returns: dict with scan stats (folders_total, folders_done, clean_count, corrupt_count, error_count, empty_count)
+    """
+    # Enumerate all folders
+    folders = _enumerate_movie_folders(roots)
+    total = len(folders)
+    
+    if progress_callback:
+        progress_callback(0, total, "", "discovery")
+    
+    # Filter out recently scanned folders if not rescanning
+    if not rescan:
+        cutoff = (datetime.utcnow() - timedelta(days=7)).isoformat()
+        existing = db.get_files(db_conn)
+        recent_scans = {
+            r["folder_path"] for r in existing 
+            if r.get("last_scan_at") and r["last_scan_at"] > cutoff
+        }
+        todo = [f for f in folders if str(f) not in recent_scans]
+    else:
+        todo = folders
+    
+    if limit:
+        todo = todo[:limit]
+    
+    if not todo:
+        return {
+            "folders_total": total,
+            "folders_done": 0,
+            "clean_count": 0,
+            "corrupt_count": 0,
+            "error_count": 0,
+            "empty_count": 0,
+        }
+    
+    # Scan statistics
+    stats = {"clean_count": 0, "corrupt_count": 0, "error_count": 0, "empty_count": 0}
+    done = 0
+    
+    def _scan_one(folder: Path):
+        """Scan a single folder."""
+        # Check for cancellation before starting
+        if cancel_flag and cancel_flag():
+            return None
+        
+        # Notify that scan is starting for this folder
+        if scan_start_callback:
+            scan_start_callback(str(folder))
+        
+        video = largest_video_in_folder(folder)
+        
+        if not video:
+            return {
+                "folder_path": str(folder),
+                "video_path": None,
+                "size_bytes": 0,
+                "scan_state": "EMPTY",
+                "stderr_tail": "no video file in folder",
+                "last_scan_secs": 0.0,
+            }
+        
+        try:
+            size = video.stat().st_size
+        except OSError as e:
+            return {
+                "folder_path": str(folder),
+                "video_path": str(video),
+                "size_bytes": 0,
+                "scan_state": "ERROR",
+                "stderr_tail": f"stat failed: {e}",
+                "last_scan_secs": 0.0,
+            }
+        
+        # Progress callback for this specific file
+        def file_progress(elapsed_sec):
+            if file_progress_callback:
+                file_progress_callback(str(folder), elapsed_sec)
+        
+        scan_state, stderr_tail, elapsed = null_decode(video, timeout_sec, progress_callback=file_progress)
+        
+        return {
+            "folder_path": str(folder),
+            "video_path": str(video),
+            "size_bytes": size,
+            "scan_state": scan_state,
+            "stderr_tail": stderr_tail,
+            "last_scan_secs": elapsed,
+        }
+    
+    # Parallel scan with thread pool
+    # Submit work in batches so we can check for cancellation
+    pool = ThreadPoolExecutor(max_workers=workers)
+    try:
+        futures = {}
+        folder_iter = iter(todo)
+        
+        # Submit initial batch (workers * 2 to keep pool full)
+        for _ in range(min(workers * 2, len(todo))):
+            try:
+                folder = next(folder_iter)
+                futures[pool.submit(_scan_one, folder)] = folder
+            except StopIteration:
+                break
+        
+        while futures:
+            # Check for cancellation BEFORE waiting
+            if cancel_flag and cancel_flag():
+                # Kill all ffmpeg processes immediately
+                _kill_ffmpeg_processes()
+                # Cancel all pending futures
+                for f in list(futures.keys()):
+                    f.cancel()
+                pool.shutdown(wait=False, cancel_futures=True)
+                return {
+                    "folders_total": total,
+                    "folders_done": done,
+                    **stats
+                }
+            
+            # Wait for next completed future
+            from concurrent.futures import wait, FIRST_COMPLETED
+            completed, _ = wait(futures.keys(), timeout=1.0, return_when=FIRST_COMPLETED)
+            
+            if not completed:
+                # Timeout - check cancel flag again
+                continue
+            
+            for fut in completed:
+                # Check cancellation after each completion
+                if cancel_flag and cancel_flag():
+                    for f in list(futures.keys()):
+                        f.cancel()
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    return {
+                        "folders_total": total,
+                        "folders_done": done,
+                        **stats
+                    }
+                
+                folder = futures.pop(fut)
+                
+                try:
+                    result = fut.result()
+                except Exception as exc:
+                    result = {
+                        "folder_path": str(folder),
+                        "video_path": None,
+                        "size_bytes": 0,
+                        "scan_state": "ERROR",
+                        "stderr_tail": f"task crashed: {exc}",
+                        "last_scan_secs": 0.0,
+                    }
+                
+                # Skip None results (cancelled)
+                if result is None:
+                    continue
+                
+                # Don't update DB if cancelled
+                if cancel_flag and cancel_flag():
+                    continue
+                
+                # Update database
+                db.upsert_file_record(db_conn, result)
+                
+                # Update stats
+                state = result["scan_state"]
+                if state == "CLEAN":
+                    stats["clean_count"] += 1
+                elif state == "CORRUPT":
+                    stats["corrupt_count"] += 1
+                elif state == "ERROR":
+                    stats["error_count"] += 1
+                elif state == "EMPTY":
+                    stats["empty_count"] += 1
+                
+                done += 1
+                
+                # Progress callback with completed result
+                if progress_callback:
+                    progress_callback(done, len(todo), result["folder_path"], state)
+                
+                # Submit next folder if available and not cancelled
+                if not (cancel_flag and cancel_flag()):
+                    try:
+                        next_folder = next(folder_iter)
+                        futures[pool.submit(_scan_one, next_folder)] = next_folder
+                    except StopIteration:
+                        pass
+    finally:
+        # Always shutdown the pool
+        pool.shutdown(wait=False, cancel_futures=True)
+    
+    return {
+        "folders_total": total,
+        "folders_done": done,
+        **stats
+    }
