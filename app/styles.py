@@ -182,24 +182,18 @@ QProgressBar::chunk {
     border-radius: 4px;
 }
 
+/* QSpinBox: minimal styling to preserve native button behavior.
+   Heavy custom styling breaks the up/down button click handling. */
 QSpinBox {
-    background-color: #1c1c2e;
     color: #e8e8e8;
+    background-color: #1c1c2e;
     border: 1px solid #2e2e48;
-    border-radius: 6px;
-    padding: 4px 4px 4px 8px;
     font-size: 13px;
-    min-height: 24px;
-}
-
-QSpinBox:hover {
-    border-color: #00e5ff;
 }
 
 QSpinBox:disabled {
-    background-color: #0e0e18;
     color: #3a3a50;
-    border-color: #1c1c2e;
+    background-color: #0e0e18;
 }
 
 QTableWidget {
