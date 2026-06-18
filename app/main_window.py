@@ -1046,15 +1046,46 @@ class MainWindow(QMainWindow):
         self._remediate_btn.setEnabled(True)
         self._scan_btn.setEnabled(True)
         
-        msg = (
-            f"Remediation complete!\n\n"
-            f"Processed: {stats['processed']}\n"
-            f"Deleted: {stats['deleted']}\n"
-            f"Searched: {stats['searched']}\n"
-            f"Failed: {stats['failed']}"
-        )
+        # Build summary message
+        summary_lines = [
+            "Remediation complete!",
+            "",
+            f"Processed: {stats['processed']}",
+            f"Deleted: {stats['deleted']}",
+            f"Searched: {stats['searched']}",
+            f"Failed: {stats['failed']}",
+        ]
         
-        QMessageBox.information(self, "Remediation Complete", msg)
+        # Add successful remediations
+        successes = stats.get("successes", [])
+        if successes:
+            summary_lines.append("")
+            summary_lines.append("✓ Successfully remediated:")
+            for name in successes[:10]:  # Show up to 10
+                summary_lines.append(f"  • {name}")
+            if len(successes) > 10:
+                summary_lines.append(f"  ... and {len(successes) - 10} more")
+        
+        # Add failure details
+        failures = stats.get("failures", [])
+        if failures:
+            summary_lines.append("")
+            summary_lines.append("✗ Failures:")
+            for name, reason in failures[:10]:  # Show up to 10
+                summary_lines.append(f"  • {name}")
+                summary_lines.append(f"    Reason: {reason}")
+            if len(failures) > 10:
+                summary_lines.append(f"  ... and {len(failures) - 10} more (see Database View)")
+        
+        msg = "\n".join(summary_lines)
+        
+        # Use a custom message box that allows for longer text
+        from PySide6.QtWidgets import QMessageBox
+        msgbox = QMessageBox(self)
+        msgbox.setWindowTitle("Remediation Complete")
+        msgbox.setIcon(QMessageBox.Icon.Information if stats['failed'] == 0 else QMessageBox.Icon.Warning)
+        msgbox.setText(msg)
+        msgbox.exec()
         
         # Refresh table
         self._refresh_table()

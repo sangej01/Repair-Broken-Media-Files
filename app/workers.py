@@ -126,7 +126,9 @@ class RemediateWorker(QThread):
             "deleted": 0,
             "searched": 0,
             "failed": 0,
-            "skipped": 0
+            "skipped": 0,
+            "failures": [],  # list of (folder_name, reason) tuples
+            "successes": [], # list of folder_names that were searched
         }
         
         try:
@@ -148,6 +150,7 @@ class RemediateWorker(QThread):
                         self.step.emit(folder_path, "lookup", "failed", "Movie not found in Radarr")
                         db.mark_failed(thread_db_conn, folder_path, "Movie not found in Radarr")
                         stats["failed"] += 1
+                        stats["failures"].append((folder_name, "Movie not found in Radarr"))
                         stats["processed"] += 1
                         continue
                 
@@ -196,6 +199,7 @@ class RemediateWorker(QThread):
                         cmd_id = self.radarr_client.search(movie_id)
                         db.mark_researching(thread_db_conn, folder_path)
                         stats["searched"] += 1
+                        stats["successes"].append(folder_name)
                         self.step.emit(folder_path, "search", "success", f"Search queued (cmd {cmd_id})")
                     else:
                         self.step.emit(folder_path, "search", "success", "[DRY RUN] Would trigger search")
@@ -207,6 +211,7 @@ class RemediateWorker(QThread):
                     self.step.emit(folder_path, "error", "failed", error_msg)
                     db.mark_failed(thread_db_conn, folder_path, error_msg)
                     stats["failed"] += 1
+                    stats["failures"].append((folder_name, error_msg))
                     stats["processed"] += 1
             
             self.finished.emit(stats)
