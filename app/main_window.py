@@ -63,6 +63,7 @@ STATE_COLORS = {
     "ERROR": "#f9e2af",     # Yellow
     "TIMEOUT": "#fab387",   # Orange (different from ERROR - file just took too long)
     "EMPTY": "#6c7086",     # Grey
+    "MISSING": "#cba6f7",   # Purple - folder deleted/moved (no longer on disk)
     "REMEDIATED": "#94e2d5", # Teal
     "SKIPPED": "#585b70",   # Dark grey
 }
@@ -212,7 +213,7 @@ class MainWindow(QMainWindow):
         
         filter_row.addWidget(QLabel("Filter:"))
         self._filter_combo = QComboBox()
-        self._filter_combo.addItems(["All", "CORRUPT", "CLEAN", "ERROR", "TIMEOUT", "EMPTY", "UNKNOWN"])
+        self._filter_combo.addItems(["All", "CORRUPT", "CLEAN", "ERROR", "TIMEOUT", "EMPTY", "MISSING", "UNKNOWN"])
         self._filter_combo.currentTextChanged.connect(self._apply_filter)
         self._filter_combo.setFixedWidth(120)
         filter_row.addWidget(self._filter_combo)
@@ -940,6 +941,17 @@ class MainWindow(QMainWindow):
         
         menu.addSeparator()
         
+        # Verify folder exists
+        verify_action = menu.addAction("🔍 Verify Folder Exists")
+        verify_action.triggered.connect(lambda: self._verify_single(path))
+        
+        # Delete record from database (only for MISSING)
+        if remed_state != "DELETING" and (verdict == "MISSING" or remed_state in ("FAILED", "SKIPPED")):
+            delete_record_action = menu.addAction("🗑️ Delete from Database")
+            delete_record_action.triggered.connect(lambda: self._delete_record_single(path))
+        
+        menu.addSeparator()
+        
         # Copy path
         copy_action = menu.addAction("📋 Copy Path")
         copy_action.triggered.connect(lambda: self._copy_path(path))
@@ -969,6 +981,42 @@ class MainWindow(QMainWindow):
         self._refresh_table()
         folder_name = Path(path).name
         self._progress_label.setText(f"Skipped: {folder_name}")
+    
+    @Slot()
+    def _verify_single(self, path: str):
+        """Check if a single folder still exists on disk."""
+        folder_name = Path(path).name
+        if Path(path).exists():
+            QMessageBox.information(self, "Folder Exists", f"✓ {folder_name}\n\nFolder exists on disk.")
+        else:
+            reply = QMessageBox.question(
+                self,
+                "Folder Missing",
+                f"✗ {folder_name}\n\nFolder no longer exists on disk.\n\nMark it as MISSING in the database?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                db.mark_missing(self._db_conn, path)
+                self._refresh_table()
+                self._progress_label.setText(f"Marked missing: {folder_name}")
+    
+    @Slot()
+    def _delete_record_single(self, path: str):
+        """Permanently delete a database record."""
+        folder_name = Path(path).name
+        reply = QMessageBox.question(
+            self,
+            "Delete Database Record",
+            f"⚠️ Permanently delete database record for:\n\n{folder_name}\n\n"
+            f"This does NOT delete any files on disk.\n"
+            f"It only removes the record from repair.db.\n\n"
+            f"Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            db.delete_record(self._db_conn, path)
+            self._refresh_table()
+            self._progress_label.setText(f"Deleted record: {folder_name}")
     
     @Slot()
     def _copy_path(self, path: str):

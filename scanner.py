@@ -337,6 +337,17 @@ def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional
         if cancel_flag and cancel_flag():
             return None
         
+        # Check if folder still exists
+        if not folder.exists():
+            return {
+                "folder_path": str(folder),
+                "video_path": None,
+                "size_bytes": 0,
+                "scan_state": "MISSING",
+                "stderr_tail": "Folder no longer exists on disk",
+                "last_scan_secs": 0.0,
+            }
+        
         # Notify that scan is starting for this folder
         if scan_start_callback:
             scan_start_callback(str(folder))

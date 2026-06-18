@@ -250,3 +250,46 @@ def mark_none(conn: sqlite3.Connection, folder_path: str):
         WHERE folder_path = ?
     """, (now, folder_path))
     conn.commit()
+
+
+def mark_missing(conn: sqlite3.Connection, folder_path: str):
+    """Mark a folder as MISSING (no longer exists on disk)."""
+    now = datetime.utcnow().isoformat()
+    conn.execute("""
+        UPDATE files SET scan_state = 'MISSING', last_scan_at = ?
+        WHERE folder_path = ?
+    """, (now, folder_path))
+    conn.commit()
+
+
+def delete_record(conn: sqlite3.Connection, folder_path: str):
+    """Permanently delete a file record from the database."""
+    conn.execute("DELETE FROM files WHERE folder_path = ?", (folder_path,))
+    conn.commit()
+
+
+def verify_existence(conn: sqlite3.Connection, paths: List[str] = None) -> int:
+    """
+    Check if folders still exist on disk and mark missing ones.
+    If paths is None, check all records.
+    Returns number of newly-missing folders detected.
+    """
+    from pathlib import Path
+    
+    if paths is None:
+        rows = conn.execute(
+            "SELECT folder_path FROM files WHERE scan_state != 'MISSING'"
+        ).fetchall()
+        paths = [r["folder_path"] for r in rows]
+    
+    missing_count = 0
+    for path in paths:
+        try:
+            if not Path(path).exists():
+                mark_missing(conn, path)
+                missing_count += 1
+        except (OSError, PermissionError):
+            # Network/permission issues - don't mark missing
+            pass
+    
+    return missing_count
