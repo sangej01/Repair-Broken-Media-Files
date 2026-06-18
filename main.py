@@ -312,10 +312,10 @@ def cli_benchmark(args):
                         help="Comma-separated worker counts to test (default: 1,2,4)")
     parser.add_argument("--root", action="append",
                         help="Library root to scan (repeatable, defaults to all from config)")
-    parser.add_argument("--max-file-gb", type=float, default=10.0,
+    parser.add_argument("--max-file-gb", type=float, default=3.0,
                         help="Skip folders whose largest file exceeds this size in GB "
-                             "(default: 10). Use 0 to disable. Bigger files give the same "
-                             "throughput data but make the benchmark take much longer.")
+                             "(default: 3). Smaller files decode faster (especially for 4K HEVC, "
+                             "where CPU - not network - is the bottleneck). Use 0 to disable filtering.")
     parser.add_argument("--yes", "-y", action="store_true",
                         help="Skip the interactive confirmation about other scans")
     opts = parser.parse_args(args)
@@ -386,14 +386,19 @@ def cli_benchmark(args):
     n_passes = len(worker_counts)
     total_data_gb = total_gb * n_passes
 
-    # Rough time estimate: 1 GbE NAS = ~110 MB/s sustained.
-    # Total time = total bytes read / effective throughput. With workers > 1
-    # the throughput per pass approximates the link bandwidth, so total time
-    # is roughly (data per pass / link bw) * n_passes for the best case, plus
-    # the overhead of the 1-worker pass that doesn't parallelize.
-    secs_per_gb = 9.0  # ~110 MB/s -> ~9 seconds per GB
-    est_secs = (total_gb * secs_per_gb) * (n_passes + 1)  # rough upper bound
-    est_min = max(1, int(est_secs / 60))
+    # Rough time estimate. Two scenarios:
+    #   - Network-bound (1080p H.264): ~9 sec/GB on 1 GbE (~110 MB/s)
+    #   - CPU-bound (4K HEVC):         ~120 sec/GB single-threaded decode
+    # We use a conservative middle estimate and present it as a range so users
+    # aren't shocked if 4K HEVC files take much longer than the optimistic case.
+    secs_per_gb_fast = 9.0    # network-bound (1080p)
+    secs_per_gb_slow = 120.0  # CPU-bound (4K HEVC)
+    # The 1-worker pass has no parallelism, so all passes contribute roughly
+    # equally to total wall time when CPU-bound.
+    est_secs_fast = total_gb * secs_per_gb_fast * n_passes
+    est_secs_slow = total_gb * secs_per_gb_slow * (n_passes / max(1, worker_counts[-1]) + 1)
+    est_min_fast = max(1, int(est_secs_fast / 60))
+    est_min_slow = max(1, int(est_secs_slow / 60))
 
     print()
     print(f"Will benchmark with {len(test_folders)} folder(s):")
@@ -404,8 +409,9 @@ def cli_benchmark(args):
     print(f"Total per pass: {total_gb:.1f} GB across {len(test_folders)} files")
     print(f"Number of passes: {n_passes} (worker counts: {worker_counts})")
     print(f"Total data to read: ~{total_data_gb:.0f} GB")
-    print(f"Rough time estimate: ~{est_min} minute(s) on a 1 GbE link "
-          f"(actual time depends on file size and codec)")
+    print(f"Rough time estimate: ~{est_min_fast}-{est_min_slow} minutes")
+    print(f"  (~{est_min_fast} min if files are 1080p H.264 [network-bound])")
+    print(f"  (~{est_min_slow} min if files are 4K HEVC [CPU-bound, slower decode])")
     print()
     print("BEFORE STARTING, please stop these to avoid skewing results:")
     print("  - Close the Repair Broken Media Files GUI on THIS PC")
@@ -449,16 +455,27 @@ def cli_benchmark(args):
 
             print(f"=== Pass with {wc} worker(s) ===")
             conn = db.init_db()
-            start = time.time()
+            pass_start = time.time()
+
+            # Per-file progress so users see what's happening in real time
+            # (and can Ctrl+C if 4K HEVC is making things slow).
+            def _bench_progress(current, total, folder_path, state):
+                if not folder_path or state == "discovery":
+                    return
+                folder_name = Path(folder_path).name
+                pass_elapsed = time.time() - pass_start
+                print(f"  [{current}/{total}] {state:7s}  ({pass_elapsed:5.1f}s elapsed)  {folder_name}",
+                      flush=True)
+
             stats = scanner.scan_library(
                 roots=roots,
                 workers=wc,
                 db_conn=conn,
-                progress_callback=None,
+                progress_callback=_bench_progress,
                 rescan=True,  # always rescan for fair benchmark
                 folders=test_folders,  # use exactly our pre-screened list
             )
-            elapsed = time.time() - start
+            elapsed = time.time() - pass_start
             conn.close()
 
             files_done = stats.get("folders_done", 0)
