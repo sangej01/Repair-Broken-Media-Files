@@ -78,6 +78,9 @@ class ScanWorker(QThread):
                 self.finished.emit(stats)
         
         except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            print(f"[ScanWorker] Exception:\n{tb}", flush=True)
             self.error.emit(str(e))
         
         finally:
@@ -207,6 +210,9 @@ class RemediateWorker(QThread):
                     stats["processed"] += 1
                     
                 except Exception as e:
+                    import traceback
+                    tb = traceback.format_exc()
+                    print(f"[RemediateWorker] Exception on {folder_path}:\n{tb}", flush=True)
                     error_msg = str(e)
                     self.step.emit(folder_path, "error", "failed", error_msg)
                     db.mark_failed(thread_db_conn, folder_path, error_msg)

@@ -258,8 +258,13 @@ def _ph(conn: RepairDBConnection) -> str:
 
 
 def _now() -> str:
-    """ISO8601 UTC timestamp string. Both sqlite and Postgres accept this format."""
-    return datetime.utcnow().isoformat()
+    """ISO8601 UTC timestamp string with explicit Z suffix.
+
+    Both backends accept this format:
+      - SQLite stores it as plain text
+      - Postgres parses it into TIMESTAMPTZ as UTC (no ambiguous interpretation)
+    """
+    return datetime.utcnow().isoformat() + "Z"
 
 
 def _row_to_dict(row, conn: RepairDBConnection) -> Dict[str, Any]:
