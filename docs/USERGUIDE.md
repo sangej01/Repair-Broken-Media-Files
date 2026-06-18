@@ -162,9 +162,9 @@ The app has two view modes accessible via the dropdown at the top:
    - Default: All three are selected
 
 2. **Set Parallel Scans:**
-   - Default: 2 workers (scans 2 movies simultaneously)
-   - Range: 1-8 workers
-   - Higher = faster but more CPU/disk usage
+   - Click the **Parallel scans** dropdown (next to Library checkboxes)
+   - Choose 1-8 (default: 2)
+   - Higher number = scans more movies at once = faster but more CPU/disk usage
    - Recommendation: 2-4 for 1 GbE NAS
 
 3. **Click "Start Scan"**

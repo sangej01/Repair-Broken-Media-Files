@@ -165,8 +165,9 @@ Re-scan → State: REMEDIATED
 ## Documentation
 
 - **[USERGUIDE.md](docs/USERGUIDE.md)** - Complete usage guide (step-by-step workflows, CLI commands, troubleshooting)
-- **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** - Technical design (database schema, state machine, API)
-- **[WORKFLOW.md](docs/WORKFLOW.md)** - Remediation workflow details
+- **[WORKFLOW.md](docs/WORKFLOW.md)** - Task-oriented walkthrough with examples
+- **[FUTURE.md](docs/FUTURE.md)** - Roadmap and future enhancements (multi-PC, PostgreSQL, etc.)
+- **[DISASTER_RECOVERY.md](docs/DISASTER_RECOVERY.md)** - How to restore from GitHub if local PC fails
 
 ---
 
