@@ -173,13 +173,13 @@ class MainWindow(QMainWindow):
         
         scan_row.addSpacing(16)
         scan_row.addWidget(QLabel("Parallel scans:"))
-        self._workers_spin = QSpinBox()
-        self._workers_spin.setRange(1, 8)
-        self._workers_spin.setValue(2)
-        self._workers_spin.setMinimumWidth(80)
-        # Use default Qt rendering for the buttons - works reliably
-        self._workers_spin.setToolTip("Number of movies to scan simultaneously (1-8).\n\nClick arrows, type a number, or scroll wheel to change.")
-        scan_row.addWidget(self._workers_spin)
+        self._workers_combo = QComboBox()
+        for n in range(1, 9):  # 1 through 8
+            self._workers_combo.addItem(str(n))
+        self._workers_combo.setCurrentText("2")
+        self._workers_combo.setFixedWidth(60)
+        self._workers_combo.setToolTip("Number of movies to scan simultaneously (1-8). Higher = faster but uses more CPU/disk.")
+        scan_row.addWidget(self._workers_combo)
         
         scan_row.addStretch()
         
@@ -494,7 +494,7 @@ class MainWindow(QMainWindow):
             self._lib_ah.setEnabled(False)
             self._lib_is.setEnabled(False)
             self._lib_tz.setEnabled(False)
-            self._workers_spin.setEnabled(False)
+            self._workers_combo.setEnabled(False)
             self._scan_btn.setEnabled(False)
             self._stop_btn.setEnabled(False)
             # Load all results from database
@@ -506,7 +506,7 @@ class MainWindow(QMainWindow):
             self._lib_ah.setEnabled(True)
             self._lib_is.setEnabled(True)
             self._lib_tz.setEnabled(True)
-            self._workers_spin.setEnabled(True)
+            self._workers_combo.setEnabled(True)
             self._scan_btn.setEnabled(True)
             self._stop_btn.setEnabled(False)
             # Clear live scan tracking and table
@@ -539,7 +539,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No Library Selected", "Please select at least one library to scan")
             return
         
-        workers = self._workers_spin.value()
+        workers = int(self._workers_combo.currentText())
         
         # Disable scan controls during scan (but leave action buttons enabled)
         self._scan_btn.setEnabled(False)
@@ -547,7 +547,7 @@ class MainWindow(QMainWindow):
         self._lib_ah.setEnabled(False)
         self._lib_is.setEnabled(False)
         self._lib_tz.setEnabled(False)
-        self._workers_spin.setEnabled(False)
+        self._workers_combo.setEnabled(False)
         
         # Reset progress bar to definite mode (no pulsing)
         self._progress_bar.setRange(0, 100)
@@ -611,7 +611,7 @@ class MainWindow(QMainWindow):
             self._lib_ah.setEnabled(True)
             self._lib_is.setEnabled(True)
             self._lib_tz.setEnabled(True)
-            self._workers_spin.setEnabled(True)
+            self._workers_combo.setEnabled(True)
     
     def _kill_ffmpeg_processes(self):
         """Kill any ffmpeg processes that may be orphaned."""
@@ -815,7 +815,7 @@ class MainWindow(QMainWindow):
         self._lib_ah.setEnabled(True)
         self._lib_is.setEnabled(True)
         self._lib_tz.setEnabled(True)
-        self._workers_spin.setEnabled(True)
+        self._workers_combo.setEnabled(True)
         
         # Clean up worker
         if self._worker:
