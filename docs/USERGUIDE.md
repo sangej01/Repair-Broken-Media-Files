@@ -394,6 +394,34 @@ The tool supports two database backends, selected via `DB_BACKEND` in `.env`:
 **Switching between backends:** simply change `DB_BACKEND` in `.env`. Each
 backend has its own independent state (no auto-sync between them).
 
+#### Migrating SQLite Data to PostgreSQL
+
+If you've been using SQLite and want to switch to PostgreSQL without losing
+your scan history, use the migration script:
+
+```powershell
+# Make sure DATABASE_URL is set (in .env or as env var)
+
+# Step 1: Dry-run to see what would be copied
+pipenv run python migrate_sqlite_to_postgres.py
+
+# Step 2: Actually perform the migration
+pipenv run python migrate_sqlite_to_postgres.py --execute
+
+# Optional: Replace conflicting Postgres rows with SQLite versions
+pipenv run python migrate_sqlite_to_postgres.py --execute --replace
+```
+
+What it does:
+- Reads every row from SQLite `files` and `runs`
+- Inserts them into Postgres `repair_files` and `repair_runs`
+- Read-only on the SQLite source (your `repair.db` is never modified)
+- Idempotent: safe to run multiple times (skips conflicts by default)
+- Reports counts before and after so you can verify
+
+After migrating, change `DB_BACKEND=postgres` in `.env` and your scan history
+appears in the GUI exactly as before.
+
 ### Schema
 
 #### `files` (SQLite) / `repair_files` (Postgres)
