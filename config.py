@@ -1,5 +1,6 @@
 """Configuration loader for Repair Broken Media Files."""
 import os
+import socket
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -14,8 +15,31 @@ RADARR_API = os.getenv("RADARR_API", "")
 EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS", "")
 EMAIL_APP_PASSWORD = os.getenv("EMAIL_APP_PASSWORD", "")
 
-# Database path
+# ── Database backend selection ────────────────────────────────────────────────
+# 'sqlite' (default) — single PC, repair.db in this directory
+# 'postgres'         — shared LAN database for multi-PC scanning
+DB_BACKEND = os.getenv("DB_BACKEND", "sqlite").lower().strip()
+
+# SQLite database path (used when DB_BACKEND=sqlite)
 DB_PATH = Path(__file__).parent / "repair.db"
+
+# PostgreSQL connection string (used when DB_BACKEND=postgres)
+# Example: postgresql://user:pass@host:5432/dbname
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+
+# Postgres host fallback list — tried in order; first to connect wins.
+# Lifted from Movie-Library-Compressor pattern: lets us use LAN IP at home,
+# Tailscale DNS/IP when remote, without changing .env per location.
+# Leave empty to use DATABASE_URL host as-is.
+POSTGRES_HOST_CANDIDATES = [
+    "192.168.1.238",       # local LAN (fastest when on home network)
+    "casaos",              # Tailscale DNS name
+    "100.102.164.45",      # Tailscale IP (last resort)
+]
+
+# Worker identification — used to track which PC scanned which folder
+# when DB_BACKEND=postgres (multi-PC mode).
+WORKER_ID = os.getenv("WORKER_ID", socket.gethostname())
 
 # Logs directory
 LOGS_DIR = Path(__file__).parent / "logs"

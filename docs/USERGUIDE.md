@@ -368,22 +368,48 @@ pipenv run python main.py remediate --max 5
 
 ## Database
 
-### Location
-`repair.db` (SQLite, in tool directory)
+### Backend Options
+
+The tool supports two database backends, selected via `DB_BACKEND` in `.env`:
+
+#### **SQLite (default)** — single-PC use
+- File: `repair.db` in the tool directory
+- Tables: `files`, `runs`
+- Set in `.env`: `DB_BACKEND=sqlite` (or omit — it's the default)
+
+#### **PostgreSQL** — multi-PC distributed scanning
+- Connection: shared LAN/Tailscale Postgres server
+- Tables: `repair_files`, `repair_runs` (named differently to coexist with `Movie-Library-Compressor`)
+- Configure in `.env`:
+  ```
+  DB_BACKEND=postgres
+  DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/DBNAME
+  WORKER_ID=ms01-a   # optional; defaults to hostname
+  ```
+- Auto-fallback: if `DATABASE_URL` host is unreachable, the tool tries the
+  hosts listed in `config.py:POSTGRES_HOST_CANDIDATES` (LAN IP → Tailscale DNS → Tailscale IP)
+- Tables auto-created on first connection
+- Multiple PCs running the app share the same data
+
+**Switching between backends:** simply change `DB_BACKEND` in `.env`. Each
+backend has its own independent state (no auto-sync between them).
 
 ### Schema
 
-#### `files` Table
+#### `files` (SQLite) / `repair_files` (Postgres)
 - `folder_path` - Unique path to movie folder
 - `scan_state` - UNKNOWN | CLEAN | CORRUPT | ERROR | TIMEOUT | MISSING | EMPTY
 - `remediation` - NONE | QUEUED | DELETED | RESEARCHING | REMEDIATED | FAILED | SKIPPED
 - `stderr_tail` - Last 400 chars of ffmpeg stderr
-- `last_scan_at` - ISO8601 timestamp
+- `last_scan_at` - timestamp
 - `radarr_movie_id` - Radarr internal ID
+- `worker_id` - (Postgres only) which PC scanned this folder
+- `lock_until` - (Postgres only) reserved for distributed coordination (future use)
 
-#### `runs` Table
+#### `runs` (SQLite) / `repair_runs` (Postgres)
 - Audit trail of scan/remediate runs
 - Stores stats: clean_count, corrupt_count, etc.
+- `worker_id` - (Postgres only) which PC ran this scan
 
 ### Resumable Scans
 

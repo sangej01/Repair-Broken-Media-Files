@@ -8,6 +8,7 @@ pyside6 = "*"
 requests = "*"
 python-dotenv = "*"
 pyyaml = "*"
+psycopg2-binary = "*"
 
 [dev-packages]
 pyinstaller = "*"

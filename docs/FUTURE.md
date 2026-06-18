@@ -4,9 +4,32 @@ Roadmap and ideas for future versions. Not committed to specific timelines.
 
 ---
 
+## Recently Completed
+
+### ✅ PostgreSQL Backend (Phase 1-2 done)
+
+The dual-backend infrastructure is in place. Switch via `DB_BACKEND` in `.env`:
+- `sqlite` (default) → local `repair.db`
+- `postgres` → shared `casaos` database, tables `repair_files` / `repair_runs`
+
+What's done:
+- Abstract dispatch via `RepairDBConnection` wrapper in `db.py`
+- Both backends implement identical operations (upsert, get, mark_*, etc.)
+- Postgres host fallback (LAN → Tailscale DNS → Tailscale IP) lifted from compressor
+- `worker_id` and `lock_until` columns reserved in Postgres schema for future Phase 3 coordination
+- Schema auto-migration: tables auto-created on first connect
+- Tested with both backends (SQLite default unchanged)
+
+What's still pending (Phase 3-5 below):
+- Distributed scan coordination via `FOR UPDATE SKIP LOCKED`
+- Headless `python main.py worker` mode
+- GUI per-worker activity panels
+
+---
+
 ## High Priority
 
-### Multi-PC Distributed Scanning (PostgreSQL Backend)
+### Multi-PC Distributed Scanning — Phase 3-5
 
 **Problem:** Scanning a 3,600-movie library on a single PC takes 24-48 hours. With multiple PCs (ms01-a, geekom-gt1-a, beelink-nyc, etc.) sitting idle, we could parallelize across machines.
 
@@ -49,17 +72,17 @@ WORKER_ID=ms01-a
 
 #### Implementation Plan
 
-**Phase 1: Abstract the Database Layer (~4h)**
-- Create `db_interface.py` with `RepairDB` abstract class
-- Refactor `db.py` → `db_sqlite.py` (lift current code as-is)
-- Add `db_postgres.py` (port `db_sqlite.py` to psycopg2)
-- Factory function `create_db(env)` chooses backend from `DB_BACKEND`
+**Phase 1: Abstract the Database Layer (~4h)** ✅ DONE
+- ~~Create db_interface.py with RepairDB abstract class~~
+- ~~Refactor db.py → db_sqlite.py (lift current code as-is)~~
+- ~~Add db_postgres.py (port db_sqlite.py to psycopg2)~~
+- ~~Factory function create_db(env) chooses backend from DB_BACKEND~~
 
-**Phase 2: PostgreSQL Schema (~2h)**
-- Same `files` and `runs` tables as SQLite
-- Add `worker_id` column to `files` table
-- Add `lock_until TIMESTAMP` for distributed coordination
-- Use `ON CONFLICT (folder_path) DO UPDATE` for upserts
+**Phase 2: PostgreSQL Schema (~2h)** ✅ DONE
+- ~~Same files and runs tables as SQLite~~
+- ~~Add worker_id column to files table~~
+- ~~Add lock_until TIMESTAMP for distributed coordination~~
+- ~~Use ON CONFLICT (folder_path) DO UPDATE for upserts~~ (uses SELECT-then-INSERT/UPDATE for now; can optimize later)
 
 **Phase 3: Distributed Scan Coordination (~6h)**
 Worker claim query (the magic):
