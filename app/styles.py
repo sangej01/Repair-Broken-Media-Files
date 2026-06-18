@@ -187,7 +187,7 @@ QSpinBox {
     color: #e8e8e8;
     border: 1px solid #2e2e48;
     border-radius: 6px;
-    padding: 4px 4px 4px 8px;
+    padding: 4px 8px;
     font-size: 13px;
 }
 
@@ -199,65 +199,6 @@ QSpinBox:disabled {
     background-color: #0e0e18;
     color: #3a3a50;
     border-color: #1c1c2e;
-}
-
-QSpinBox::up-button {
-    subcontrol-origin: border;
-    subcontrol-position: top right;
-    width: 18px;
-    border-left: 1px solid #2e2e48;
-    border-bottom: 1px solid #2e2e48;
-    background-color: #1c1c2e;
-}
-
-QSpinBox::up-button:hover {
-    background-color: #2a2a44;
-}
-
-QSpinBox::up-button:pressed {
-    background-color: #36365a;
-}
-
-QSpinBox::up-arrow {
-    image: none;
-    border-left: 4px solid transparent;
-    border-right: 4px solid transparent;
-    border-bottom: 5px solid #00e5ff;
-    width: 0px;
-    height: 0px;
-}
-
-QSpinBox::up-arrow:disabled {
-    border-bottom-color: #3a3a50;
-}
-
-QSpinBox::down-button {
-    subcontrol-origin: border;
-    subcontrol-position: bottom right;
-    width: 18px;
-    border-left: 1px solid #2e2e48;
-    background-color: #1c1c2e;
-}
-
-QSpinBox::down-button:hover {
-    background-color: #2a2a44;
-}
-
-QSpinBox::down-button:pressed {
-    background-color: #36365a;
-}
-
-QSpinBox::down-arrow {
-    image: none;
-    border-left: 4px solid transparent;
-    border-right: 4px solid transparent;
-    border-top: 5px solid #00e5ff;
-    width: 0px;
-    height: 0px;
-}
-
-QSpinBox::down-arrow:disabled {
-    border-top-color: #3a3a50;
 }
 
 QTableWidget {

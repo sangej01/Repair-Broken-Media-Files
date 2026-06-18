@@ -177,6 +177,7 @@ class MainWindow(QMainWindow):
         self._workers_spin.setRange(1, 8)
         self._workers_spin.setValue(2)
         self._workers_spin.setFixedWidth(80)
+        self._workers_spin.setButtonSymbols(QSpinBox.ButtonSymbols.UpDownArrows)
         self._workers_spin.setToolTip("Number of movies to scan simultaneously (1-8). Higher = faster but uses more CPU/disk.\n\nYou can: type a number, click arrows, or scroll wheel to change.")
         scan_row.addWidget(self._workers_spin)
         
