@@ -205,9 +205,16 @@ The app has two view modes accessible via the dropdown at the top:
 - 🟠 **TIMEOUT** (orange) - Scan exceeded timeout - file too large or NAS too slow
 - 🟣 **MISSING** (purple) - Folder no longer exists on disk
 - ⚪ **EMPTY** (grey) - No video file found in folder
-- ⚫ **UNKNOWN** (default) - Folder discovered but not yet scanned, OR a previous failed scan that's been reset for retry
+- ⚫ **UNKNOWN** (default) - Status not yet determined
 
-**Note about UNKNOWN:** This is a transient state - movies in this state will be picked up by the next scan. You shouldn't normally see many UNKNOWN entries unless you've reset failed scans or just discovered new folders.
+**About UNKNOWN status:** This is a normal, expected status. Movies become UNKNOWN when:
+- Folders are discovered but not yet scanned (e.g., during initial scan)
+- A scan is interrupted before reaching them
+- A previous failed scan (TIMEOUT/ERROR) was reset for retry
+
+UNKNOWN movies will be processed on the next scan. To convert UNKNOWN movies to a definitive status (CLEAN/CORRUPT/etc.), simply run a scan. The scanner prioritizes UNKNOWN and failed-state movies (no 7-day skip applies).
+
+**Filter to UNKNOWN** to see what hasn't been scanned yet - useful for verifying scan completeness.
 
 #### Filtering:
 - **Status dropdown:** Show only CORRUPT, CLEAN, ERROR, TIMEOUT, MISSING, EMPTY, UNKNOWN, or All
