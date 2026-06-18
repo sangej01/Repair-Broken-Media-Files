@@ -553,19 +553,85 @@ RADARR_API=your-api-key-here
 
 ## Performance Guidelines
 
-### Recommended Settings
+### Finding the Optimal Worker Count
+
+The right number of parallel scans depends on your bottleneck — usually network
+bandwidth between this PC and the NAS. Use the built-in benchmark to measure
+empirically rather than guess.
+
+#### Before Running the Benchmark
+
+For accurate results, **stop other scanning activity first**:
+- Close the Repair Broken Media Files GUI on this PC
+- Stop any active scans on other PCs sharing the NAS or Postgres backend
+- Avoid heavy network usage (downloads, streaming, etc.) during the test
+
+The benchmark uses a temporary isolated SQLite database that is deleted when
+it finishes, so your real `repair.db` / shared Postgres state is NOT touched.
+
+```powershell
+# Default: scans 8 folders at 1, 2, 4, 6, 8 workers and reports throughput
+python main.py benchmark
+
+# Or with the deployed exe:
+.\RepairBrokenMedia.exe benchmark
+
+# Skip the interactive confirmation (e.g., for scripts)
+.\RepairBrokenMedia.exe benchmark --yes
+
+# Customize the test
+python main.py benchmark --limit 16 --workers 1,2,4,8
+
+# Benchmark only one library root
+python main.py benchmark --root "Z:\Movies\T-Z"
+```
+
+Sample output:
+```
+==========================
+BENCHMARK SUMMARY
+==========================
+ Workers   Files  Time(s)   Rate(f/s)   Speedup
+       1       8    540.2        0.015     1.00x
+       2       8    310.5        0.026     1.74x
+       4       8    295.1        0.027     1.81x   ← diminishing returns
+       8       8    301.7        0.027     1.79x
+
+Best throughput: 4 workers (0.027 files/sec)
+  1 -> 2 workers: +73.9%   ← good gain
+  2 -> 4 workers:  +4.0%   ← diminishing returns
+  4 -> 8 workers:  -1.4%   ← network/NAS saturated
+```
+
+In this example, **2 workers gives ~74% speedup over 1**, but going to 4 only
+adds 4% — so the sweet spot is 2-3 workers. Going to 8 actually slows down
+because the NIC is saturated and workers stall waiting for data.
+
+### Bottleneck-Based Recommendations
+
+If you don't want to benchmark, here are reasonable defaults:
+
+| Network | Recommended Workers | Why |
+|---|---|---|
+| 1 GbE NAS link | **2** | Single link saturates around 100-125 MB/s |
+| 2.5 GbE NAS link | **3-4** | More headroom for parallel reads |
+| 10 GbE NAS link | **6-8** | CPU usually becomes the bottleneck before network |
+| HDD-based NAS | **2-3** max | Disk seeks limit benefit of parallelism |
+| SSD-based NAS | scale with network | Disk is rarely the bottleneck |
+
+### Library-Wide Time Estimates
+
+These assume **2 workers on 1 GbE** (the default). Faster networks scale roughly
+linearly with worker count up to your bottleneck.
 
 | Library Size | Workers | Expected Time |
 |--------------|---------|---------------|
 | ~500 movies  | 2       | 6-12 hours    |
-| ~1000 movies | 4       | 8-16 hours    |
-| ~3600 movies | 4       | 24-48 hours   |
+| ~1000 movies | 2-4     | 8-24 hours    |
+| ~3600 movies | 2-4     | 24-72 hours   |
 
-### Parallel Scan Limits
-
-- **1-2 workers:** Safe for any NAS
-- **4 workers:** Good balance for 1 GbE
-- **8 workers:** May saturate NAS/network
+For multi-PC scanning, divide by the number of PCs running in parallel
+(coordination is automatic via the Postgres backend — see DEPLOYMENT.md).
 
 ### Scan Time Per File
 
@@ -573,6 +639,9 @@ RADARR_API=your-api-key-here
 - **Medium (2-5 GB):** 1-3 min
 - **Large (5-15 GB):** 3-6 min
 - **Very Large (15+ GB):** 6-15 min
+
+The adaptive timeout adjusts automatically (2 minutes per GB), so 4K rips
+that previously timed out at 30 minutes now have the room to complete.
 
 ---
 
