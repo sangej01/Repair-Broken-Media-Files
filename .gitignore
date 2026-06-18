@@ -4,9 +4,11 @@ __pycache__/
 *$py.class
 *.egg-info/
 .eggs/
+
+# PyInstaller build artifacts (the .spec is committed as source-of-truth)
 dist/
 build/
-*.spec
+# Note: repair_broken_media.spec IS committed (it's the build recipe)
 
 # Virtual environments
 .venv/
