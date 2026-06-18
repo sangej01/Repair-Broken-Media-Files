@@ -300,12 +300,15 @@ def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional
         progress_callback(0, total, "", "discovery")
     
     # Filter out recently scanned folders if not rescanning
+    # IMPORTANT: TIMEOUT and ERROR states are always re-scanned (failed attempts)
     if not rescan:
         cutoff = (datetime.utcnow() - timedelta(days=7)).isoformat()
         existing = db.get_files(db_conn)
+        # Skip folder only if: scanned recently AND result was definitive (not TIMEOUT/ERROR)
         recent_scans = {
             r["folder_path"] for r in existing 
             if r.get("last_scan_at") and r["last_scan_at"] > cutoff
+            and r.get("scan_state") not in ("TIMEOUT", "ERROR", "UNKNOWN")
         }
         todo = [f for f in folders if str(f) not in recent_scans]
     else:
