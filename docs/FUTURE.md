@@ -10,84 +10,97 @@ Roadmap and ideas for future versions. Not committed to specific timelines.
 
 **Problem:** Scanning a 3,600-movie library on a single PC takes 24-48 hours. With multiple PCs (ms01-a, geekom-gt1-a, beelink-nyc, etc.) sitting idle, we could parallelize across machines.
 
-**Approach: Centralize the database in PostgreSQL**
+**Approach: Lift the proven pattern from `Movie-Library-Compressor/tracker.py`**
 
-#### Current Architecture (v1)
-```
-┌──────────────────┐
-│   PC #1 (Local)  │
-│  ┌───────────┐   │
-│  │ App + GUI │   │
-│  └─────┬─────┘   │
-│        │         │
-│  ┌─────▼─────┐   │
-│  │ repair.db │   │
-│  │ (SQLite)  │   │
-│  └───────────┘   │
-└──────────────────┘
-```
+That tool already implements exactly what we need: a pluggable backend (SQLite or PostgreSQL) where multiple hosts share a Postgres database. We can copy its design directly.
 
-#### Proposed Architecture (v2)
-```
-┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-│ PC #1 (GUI)  │  │ PC #2 (Worker)│ │ PC #3 (Worker)│
-│ ┌──────────┐ │  │ ┌──────────┐ │  │ ┌──────────┐ │
-│ │  App+GUI │ │  │ │  Scanner │ │  │ │  Scanner │ │
-│ └────┬─────┘ │  │ └────┬─────┘ │  │ └────┬─────┘ │
-└──────┼───────┘  └──────┼───────┘  └──────┼───────┘
-       │                 │                 │
-       └─────────┬───────┴─────────────────┘
-                 │
-        ┌────────▼─────────┐
-        │   PostgreSQL DB   │
-        │ (centralized state)│
-        └───────────────────┘
+#### Reference Implementation
+
+`Movie-Library-Compressor/src/compressor/tracker.py` does this with:
+
+1. **Abstract base class** `TrackerDB` defines the interface
+2. **`SQLiteTrackerDB`** - default, single-PC (per-host file)
+3. **`PostgresTrackerDB`** - shared LAN database
+4. **`create_tracker(cfg)` factory** picks backend based on config
+5. **Hostname-aware records** so each PC's work is identifiable
+6. **Multi-host fallback** for connection (LAN IP → Tailscale DNS → Tailscale IP)
+
+#### Adapt for Repair Broken Media Files
+
+**Simpler than Compressor's approach:**
+- Don't use compressor.yaml — use plain `.env` (consistent with Pluck Movies, Radarr Import patterns)
+- All config in `.env`, no YAML
+
+**Proposed `.env` additions:**
+```bash
+# Database backend: 'sqlite' (default) or 'postgres'
+DB_BACKEND=sqlite
+
+# Only needed when DB_BACKEND=postgres
+DATABASE_URL=postgresql://repair_user:password@host:5432/repair_broken_media
+
+# Optional: try multiple hosts in order (first to connect wins)
+POSTGRES_HOST_CANDIDATES=192.168.1.238,casaos,100.102.164.45
+
+# Optional: override the hostname used for worker tracking
+# Defaults to socket.gethostname()
+WORKER_ID=ms01-a
 ```
 
 #### Implementation Plan
 
-**Phase 1: Abstract the Database Layer**
-- Create `db_interface.py` that defines abstract operations
-- Refactor `db.py` → `db_sqlite.py` (current implementation)
-- Add `db_postgres.py` (new implementation)
-- Use config flag to choose backend:
-  ```python
-  DB_BACKEND = os.getenv("DB_BACKEND", "sqlite")  # or "postgres"
-  ```
+**Phase 1: Abstract the Database Layer (~4h)**
+- Create `db_interface.py` with `RepairDB` abstract class
+- Refactor `db.py` → `db_sqlite.py` (lift current code as-is)
+- Add `db_postgres.py` (port `db_sqlite.py` to psycopg2)
+- Factory function `create_db(env)` chooses backend from `DB_BACKEND`
 
-**Phase 2: PostgreSQL Schema**
-- Same schema as SQLite but with PostgreSQL types
-- Add `worker_id` column to track which PC scanned each folder
-- Add `lock_until` column for distributed scan coordination
-- Connection via existing PostgreSQL instance
+**Phase 2: PostgreSQL Schema (~2h)**
+- Same `files` and `runs` tables as SQLite
+- Add `worker_id` column to `files` table
+- Add `lock_until TIMESTAMP` for distributed coordination
+- Use `ON CONFLICT (folder_path) DO UPDATE` for upserts
 
-**Phase 3: Distributed Scan Coordination**
-- Each worker queries: `SELECT folder_path FROM files WHERE scan_state IN ('UNKNOWN', 'TIMEOUT', 'ERROR') AND (lock_until IS NULL OR lock_until < NOW()) LIMIT 1 FOR UPDATE SKIP LOCKED`
-- This atomically claims a folder and skips it for other workers
-- Lock expires after timeout (e.g., 1 hour) so dead workers don't block forever
+**Phase 3: Distributed Scan Coordination (~6h)**
+Worker claim query (the magic):
+```sql
+SELECT folder_path FROM files
+WHERE scan_state IN ('UNKNOWN', 'TIMEOUT', 'ERROR')
+  AND (lock_until IS NULL OR lock_until < NOW())
+ORDER BY first_seen_at
+LIMIT 1
+FOR UPDATE SKIP LOCKED
+```
+- `FOR UPDATE SKIP LOCKED` = atomic claim, no two workers grab same folder
+- Lock expires after 1 hour (handles dead workers automatically)
 - Worker updates `worker_id`, `last_scan_at`, `scan_state` when done
 
-**Phase 4: Worker Mode**
+**Phase 4: Worker Mode (~4h)**
 - New CLI: `python main.py worker` runs headlessly
-- Pulls work from PostgreSQL until library complete
-- No GUI needed
-- Can be scheduled task on each PC
+- Polls PostgreSQL for unclaimed work
+- Scans, updates DB, repeats until idle
+- Logs to `logs/worker_<hostname>.log`
+- Can run as Windows scheduled task on each PC
 
-**Phase 5: GUI Updates**
-- View worker activity (which PC is scanning what)
-- Per-worker statistics (movies/hour throughput)
-- Cancel/pause specific workers from main GUI
+**Phase 5: GUI Updates (~6h)**
+- View worker activity column showing which PC scanned each folder
+- Per-worker statistics panel (movies/hour throughput)
+- Status bar: "3 workers active: ms01-a (scanning 28YL), gt1-a (scanning Naked), nyc (idle)"
+- Cancel/pause specific workers (set lock_until to far future)
 
-#### Configuration Example
-```bash
-# .env
-DB_BACKEND=postgres
-POSTGRES_HOST=mforum-ms01-a
-POSTGRES_PORT=5432
-POSTGRES_DB=repair_broken_media
-POSTGRES_USER=repair_user
-POSTGRES_PASSWORD=...
-WORKER_ID=ms01-a  # unique per machine
+#### Connection Fallback Pattern (from compressor)
+
+Lift this verbatim - it handles both LAN and Tailscale gracefully:
+
+```python
+# Try each host in POSTGRES_HOST_CANDIDATES until one connects
+for host in POSTGRES_HOST_CANDIDATES:
+    dsn = substitute_host(DATABASE_URL, host)
+    try:
+        return PostgresRepairDB(dsn, hostname)
+    except Exception:
+        continue
+raise ConnectionError("Could not reach PostgreSQL via any host")
 ```
 
 #### Benefits
@@ -96,11 +109,12 @@ WORKER_ID=ms01-a  # unique per machine
 - GUI runs anywhere, sees same data
 - Workers can be added/removed dynamically
 - Already have PostgreSQL running for `Movie-Library-Compressor`
+- **Reuses proven pattern** - tracker.py has been running in production
 
-#### Potential Issues
-- Network latency on small queries (mitigated: rare during long scans)
-- PostgreSQL becomes single point of failure (mitigated: backup to SQLite mirror?)
-- Coordination edge cases (lost workers, stale locks)
+#### Backwards Compatibility
+- `DB_BACKEND=sqlite` (default) keeps current behavior unchanged
+- Single-PC users see no change
+- Multi-PC users opt in via .env change
 
 #### Effort Estimate
 - Phase 1 (abstraction): ~4 hours
@@ -108,7 +122,11 @@ WORKER_ID=ms01-a  # unique per machine
 - Phase 3 (coordination): ~6 hours
 - Phase 4 (worker mode): ~4 hours
 - Phase 5 (GUI updates): ~6 hours
-- **Total: ~22 hours of focused work**
+- **Total: ~22 hours** (could be less by directly lifting tracker.py code)
+
+#### Files to Reference
+- `Movie-Library-Compressor/src/compressor/tracker.py` — the pattern to copy
+- `Movie-Library-Compressor/src/compressor/config.py` — POSTGRES_HOST_CANDIDATES handling
 
 ---
 
