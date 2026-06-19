@@ -296,23 +296,52 @@ def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional
     Returns: dict with scan stats (folders_total, folders_done, clean_count, corrupt_count, error_count, empty_count)
     """
     # Reclaim any locks held by THIS worker that may have leaked from a
-    # crashed previous run. (Other workers' locks are left alone — they may
-    # still be active. Stale locks expire automatically via lock_until.)
+    # crashed previous run, AND reset their scan_state from SCANNING back to
+    # UNKNOWN so they get re-scanned. Other workers' active locks are left
+    # alone — those expire automatically via lock_until.
+    #
+    # Also clean up SCANNING rows whose lock has already expired regardless
+    # of which worker held them — the previous worker is clearly dead.
     try:
         from config import WORKER_ID
         if db_conn.backend == "postgres":
             with db_conn.raw.cursor() as cur:
+                # Clean up our own leaked locks
                 cur.execute(
-                    "UPDATE repair_files SET worker_id = NULL, lock_until = NULL "
+                    "UPDATE repair_files "
+                    "SET worker_id = NULL, lock_until = NULL, "
+                    "    scan_state = CASE WHEN scan_state = 'SCANNING' THEN 'UNKNOWN' "
+                    "                      ELSE scan_state END "
                     "WHERE worker_id = %s",
                     (WORKER_ID,),
                 )
+                # Clean up other workers' expired locks (they crashed/disappeared)
+                cur.execute(
+                    "UPDATE repair_files "
+                    "SET worker_id = NULL, lock_until = NULL, "
+                    "    scan_state = CASE WHEN scan_state = 'SCANNING' THEN 'UNKNOWN' "
+                    "                      ELSE scan_state END "
+                    "WHERE lock_until IS NOT NULL AND lock_until < NOW()"
+                )
             db_conn.raw.commit()
         else:
+            from datetime import datetime
+            now_iso = datetime.utcnow().isoformat() + "Z"
             db_conn.raw.execute(
-                "UPDATE files SET worker_id = NULL, lock_until = NULL "
+                "UPDATE files "
+                "SET worker_id = NULL, lock_until = NULL, "
+                "    scan_state = CASE WHEN scan_state = 'SCANNING' THEN 'UNKNOWN' "
+                "                      ELSE scan_state END "
                 "WHERE worker_id = ?",
                 (WORKER_ID,),
+            )
+            db_conn.raw.execute(
+                "UPDATE files "
+                "SET worker_id = NULL, lock_until = NULL, "
+                "    scan_state = CASE WHEN scan_state = 'SCANNING' THEN 'UNKNOWN' "
+                "                      ELSE scan_state END "
+                "WHERE lock_until IS NOT NULL AND lock_until < ?",
+                (now_iso,),
             )
             db_conn.raw.commit()
     except Exception:
