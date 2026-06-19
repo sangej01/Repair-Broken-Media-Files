@@ -325,7 +325,7 @@ def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional
                 )
             db_conn.raw.commit()
         else:
-            from datetime import datetime
+            # datetime/timedelta are imported at module level (line 10)
             now_iso = datetime.utcnow().isoformat() + "Z"
             db_conn.raw.execute(
                 "UPDATE files "
