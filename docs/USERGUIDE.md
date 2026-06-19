@@ -555,57 +555,26 @@ RADARR_API=your-api-key-here
 
 ### Finding the Optimal Worker Count
 
-The right number of parallel scans depends on your bottleneck — usually network
-bandwidth between this PC and the NAS. Use the built-in benchmark to measure
-empirically rather than guess.
+The right number of parallel scans depends on your hardware: network speed,
+NAS disk type (HDD vs SSD), and codec mix (HEVC is more CPU-intensive than
+H.264). The default of 2 is a reasonable starting point for most setups.
 
-#### Before Running the Benchmark
-
-For accurate results, **stop other scanning activity first**:
-- Close the Repair Broken Media Files GUI on this PC
-- Stop any active scans on other PCs sharing the NAS or Postgres backend
-- Avoid heavy network usage (downloads, streaming, etc.) during the test
-
-The benchmark uses a temporary isolated SQLite database that is deleted when
-it finishes, so your real `repair.db` / shared Postgres state is NOT touched.
+To measure empirically, use the built-in benchmark:
 
 ```powershell
-# Default: scans 8 folders at 1, 2, 4, 6, 8 workers and reports throughput
-python main.py benchmark
-
-# Or with the deployed exe:
 .\RepairBrokenMedia.exe benchmark
-
-# Skip the interactive confirmation (e.g., for scripts)
-.\RepairBrokenMedia.exe benchmark --yes
-
-# Customize the test
-python main.py benchmark --limit 16 --workers 1,2,4,8
-
-# Benchmark only one library root
-python main.py benchmark --root "Z:\Movies\T-Z"
 ```
 
-Sample output:
-```
-==========================
-BENCHMARK SUMMARY
-==========================
- Workers   Files  Time(s)   Rate(f/s)   Speedup
-       1       8    540.2        0.015     1.00x
-       2       8    310.5        0.026     1.74x
-       4       8    295.1        0.027     1.81x   ← diminishing returns
-       8       8    301.7        0.027     1.79x
+It scans a small sample at different worker counts (1, 2, 4 by default), uses
+a temporary isolated SQLite database (your real data is not touched), and
+prints a summary table showing the speedup curve.
 
-Best throughput: 4 workers (0.027 files/sec)
-  1 -> 2 workers: +73.9%   ← good gain
-  2 -> 4 workers:  +4.0%   ← diminishing returns
-  4 -> 8 workers:  -1.4%   ← network/NAS saturated
-```
-
-In this example, **2 workers gives ~74% speedup over 1**, but going to 4 only
-adds 4% — so the sweet spot is 2-3 workers. Going to 8 actually slows down
-because the NIC is saturated and workers stall waiting for data.
+**See [BENCHMARK.md](BENCHMARK.md) for full documentation**, including:
+- What to stop before running
+- How to interpret the output
+- Common options (`--limit`, `--workers`, `--root`, `--max-file-gb`)
+- Hardware-based recommendations if you don't want to benchmark
+- Real-world example with explanation
 
 ### Bottleneck-Based Recommendations
 

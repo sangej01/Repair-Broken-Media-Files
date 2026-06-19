@@ -166,6 +166,7 @@ Re-scan → State: REMEDIATED
 
 - **[USERGUIDE.md](docs/USERGUIDE.md)** - Complete usage guide (step-by-step workflows, CLI commands, troubleshooting)
 - **[WORKFLOW.md](docs/WORKFLOW.md)** - Task-oriented walkthrough with examples
+- **[BENCHMARK.md](docs/BENCHMARK.md)** - Find your optimal `--workers` value with the built-in benchmark
 - **[DEPLOYMENT.md](docs/DEPLOYMENT.md)** - Build standalone .exe and deploy to other PCs
 - **[FUTURE.md](docs/FUTURE.md)** - Roadmap and future enhancements (multi-PC, PostgreSQL, etc.)
 - **[DISASTER_RECOVERY.md](docs/DISASTER_RECOVERY.md)** - How to restore from GitHub if local PC fails
