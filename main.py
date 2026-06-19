@@ -486,7 +486,9 @@ def cli_benchmark(args):
                 "files_done": files_done,
                 "rate": rate,
             })
-            print(f"  {files_done} files in {elapsed:.1f}s = {rate:.2f} files/sec")
+            files_per_hour = rate * 3600
+            print(f"  {files_done} files in {elapsed:.1f}s "
+                  f"= {rate:.4f} files/sec ({files_per_hour:.1f} files/hour)")
             print()
     finally:
         # Restore original settings and clean up the temp DB
@@ -502,23 +504,25 @@ def cli_benchmark(args):
     print("=" * 60)
     print("BENCHMARK SUMMARY")
     print("=" * 60)
-    print(f"{'Workers':>8}  {'Files':>6}  {'Time(s)':>8}  {'Rate(f/s)':>10}  {'Speedup':>8}")
-    print("-" * 60)
+    print(f"{'Workers':>8}  {'Files':>6}  {'Time(s)':>9}  {'Files/sec':>10}  {'Files/hr':>9}  {'Speedup':>8}")
+    print("-" * 70)
     baseline_rate = results[0]["rate"] if results else 1.0
     if baseline_rate <= 0:
         baseline_rate = 1.0
     for r in results:
         speedup = r["rate"] / baseline_rate if baseline_rate > 0 else 0
+        files_per_hour = r["rate"] * 3600
         print(
             f"{r['workers']:>8}  {r['files_done']:>6}  "
-            f"{r['elapsed']:>8.1f}  {r['rate']:>10.2f}  {speedup:>7.2f}x"
+            f"{r['elapsed']:>9.1f}  {r['rate']:>10.4f}  {files_per_hour:>9.1f}  {speedup:>7.2f}x"
         )
     print()
 
     # Recommend
     if len(results) >= 2:
         best = max(results, key=lambda r: r["rate"])
-        print(f"Best throughput: {best['workers']} workers ({best['rate']:.2f} files/sec)")
+        best_per_hour = best["rate"] * 3600
+        print(f"Best throughput: {best['workers']} workers ({best['rate']:.4f} files/sec, {best_per_hour:.1f} files/hour)")
         # Also identify diminishing returns
         for i in range(1, len(results)):
             prev = results[i - 1]
