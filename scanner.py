@@ -163,13 +163,15 @@ def null_decode(video_path: Path, timeout_sec: int = 1800, progress_callback=Non
     
     # Adjust timeout based on file size for large files
     # Rough estimate: 1 minute per GB minimum, with floor of timeout_sec
-    try:
-        file_size_gb = video_path.stat().st_size / (1024**3)
-        # Allow 2 minutes per GB for slow NAS, with min of timeout_sec
-        adaptive_timeout = max(timeout_sec, int(file_size_gb * 120))
-        timeout_sec = adaptive_timeout
-    except Exception:
-        pass  # Use default if we can't stat
+    # Skip entirely when timeout_sec == 0 (No limit) — don't accidentally re-enable a timeout.
+    if timeout_sec > 0:
+        try:
+            file_size_gb = video_path.stat().st_size / (1024**3)
+            # Allow 2 minutes per GB for slow NAS, with min of timeout_sec
+            adaptive_timeout = max(timeout_sec, int(file_size_gb * 120))
+            timeout_sec = adaptive_timeout
+        except Exception:
+            pass  # Use default if we can't stat
     
     try:
         # Start ffmpeg process without waiting
@@ -192,7 +194,7 @@ def null_decode(video_path: Path, timeout_sec: int = 1800, progress_callback=Non
         while proc.poll() is None:
             # Check if we've exceeded timeout
             elapsed = time.time() - start
-            if elapsed > timeout_sec:
+            if timeout_sec > 0 and elapsed > timeout_sec:
                 # Kill the process properly
                 try:
                     proc.kill()
@@ -275,6 +277,7 @@ def _enumerate_movie_folders(roots: list) -> list:
 def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional[Callable] = None,
                  file_progress_callback: Optional[Callable] = None,
                  scan_start_callback: Optional[Callable] = None,
+                 size_known_callback: Optional[Callable] = None,
                  cancel_flag: Optional[Callable] = None,
                  rescan: bool = False, limit: Optional[int] = None, timeout_sec: int = 1800,
                  folders: Optional[List[Path]] = None):
@@ -286,6 +289,7 @@ def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional
     - progress_callback: optional function(current, total, folder_name, state) - called after each folder completes
     - file_progress_callback: optional function(folder_path, elapsed_sec) - called during each file scan
     - scan_start_callback: optional function(folder_path) - called when a folder scan starts
+    - size_known_callback: optional function(folder_path, size_bytes) - called when file size is known, before ffmpeg starts
     - cancel_flag: optional function() -> bool - called to check if scan should be cancelled
     - rescan: if False, skip folders with recent last_scan_at (< 7 days)
     - limit: optional max folders to scan (for testing)
@@ -482,6 +486,10 @@ def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional
                 "last_scan_secs": 0.0,
             }
         
+        # Notify that file size is known (before ffmpeg starts)
+        if size_known_callback:
+            size_known_callback(folder_str, size)
+        
         # Progress callback for this specific file
         def file_progress(elapsed_sec):
             if file_progress_callback:
@@ -537,17 +545,6 @@ def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional
                 continue
             
             for fut in completed:
-                # Check cancellation after each completion
-                if cancel_flag and cancel_flag():
-                    for f in list(futures.keys()):
-                        f.cancel()
-                    pool.shutdown(wait=False, cancel_futures=True)
-                    return {
-                        "folders_total": total,
-                        "folders_done": done,
-                        **stats
-                    }
-                
                 folder = futures.pop(fut)
                 
                 try:
@@ -562,12 +559,8 @@ def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional
                         "last_scan_secs": 0.0,
                     }
                 
-                # Skip None results (cancelled)
+                # Skip None results (cancelled before scan started)
                 if result is None:
-                    continue
-                
-                # Don't update DB if cancelled
-                if cancel_flag and cancel_flag():
                     continue
                 
                 # Folder was claimed by another worker — skip silently.
@@ -576,8 +569,8 @@ def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional
                     # No DB update, no progress (other PC will report)
                     continue
                 
-                # Update database (this also overwrites our 'SCANNING' marker
-                # with the final state) and clear our claim lock.
+                # Always write completed results to DB, even if cancelled —
+                # a result that finished deserves to be recorded.
                 try:
                     db.upsert_file_record(db_conn, result)
                     db.release_scan_claim(db_conn, result["folder_path"])

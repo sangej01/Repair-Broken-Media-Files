@@ -11,18 +11,20 @@ class ScanWorker(QThread):
     # Signals
     discovery = Signal(int)  # total folders discovered
     scan_start = Signal(str)  # folder_path - emitted when folder scan starts
+    scan_size_known = Signal(str, "qint64")  # folder_path, size_bytes - emitted when file size is known
     progress = Signal(int, int, str, str)  # current, total, folder_name, state
     file_progress = Signal(str, float)  # folder_path, elapsed_sec - emitted during file scan
     result_row = Signal(dict)  # FileRecord as dict
     finished = Signal(dict)  # ScanStats as dict
     error = Signal(str)
     
-    def __init__(self, roots: List, workers: int, rescan: bool = False, limit: Optional[int] = None):
+    def __init__(self, roots: List, workers: int, rescan: bool = False, limit: Optional[int] = None, timeout_sec: int = 1800):
         super().__init__()
         self.roots = roots
         self.workers = workers
         self.rescan = rescan
         self.limit = limit
+        self.timeout_sec = timeout_sec
         self._cancelled = False
         self._active_processes = []  # Track ffmpeg processes
     
@@ -40,6 +42,12 @@ class ScanWorker(QThread):
                 if self._cancelled:
                     return
                 self.scan_start.emit(folder_path)
+            
+            # Size known callback - emitted when file size is determined, before ffmpeg starts
+            def size_known_callback(folder_path, size_bytes):
+                if self._cancelled:
+                    return
+                self.scan_size_known.emit(folder_path, size_bytes)
             
             # Progress callback that emits Qt signals after each folder completes
             def progress_callback(current, total, folder_path, state):
@@ -68,9 +76,11 @@ class ScanWorker(QThread):
                 progress_callback=progress_callback,
                 file_progress_callback=file_progress_callback,
                 scan_start_callback=scan_start_callback,
+                size_known_callback=size_known_callback,
                 cancel_flag=cancel_check,
                 rescan=self.rescan,
-                limit=self.limit
+                limit=self.limit,
+                timeout_sec=self.timeout_sec,
             )
             
             # Emit finished with stats

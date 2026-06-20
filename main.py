@@ -215,61 +215,61 @@ def cli_remediate(args):
     if opts.max:
         files = files[:opts.max]
     
-    print(f"{'[DRY RUN] ' if opts.dry_run else ''}Remediating {len(files)} file(s)...")
-    
+    dry = opts.dry_run
+    print(f"{'[DRY RUN] ' if dry else ''}Remediating {len(files)} file(s)...")
+
     from radarr import RadarrClient
     radarr = RadarrClient()
-    
+
     for i, f in enumerate(files, 1):
         folder_path = f["folder_path"]
         folder_name = Path(folder_path).name
-        
+
         print(f"\n[{i}/{len(files)}] {folder_name}")
-        
+
         try:
             # Find movie in Radarr
             print("  Looking up in Radarr...", end=" ", flush=True)
             movie = radarr.find_movie_by_path(folder_path)
-            
+
             if not movie:
                 print("NOT FOUND")
                 db.mark_failed(conn, folder_path, "Movie not found in Radarr")
                 continue
-            
+
             movie_id = movie.get("id")
             print(f"OK (id={movie_id})")
-            
+
             # Delete file from disk
-            print(f"  {'[DRY RUN] Would delete' if opts.dry_run else 'Deleting from disk'}...", end=" ", flush=True)
-            if not opts.dry_run:
+            del_verb = "[DRY RUN] Would delete" if dry else "Deleting from disk"
+            print(f"  {del_verb}...", end=" ", flush=True)
+            if not dry:
                 if Path(folder_path).exists():
                     import shutil
                     shutil.rmtree(folder_path)
                     db.mark_deleted(conn, folder_path)
-                    print("OK")
-                else:
-                    print("NOT FOUND")
+                print("OK")
             else:
                 print("SKIP")
-            
+
             # Radarr workflow
             moviefile = movie.get("movieFile", {})
             file_id = moviefile.get("id")
-            
-            if not opts.dry_run:
+
+            if not dry:
                 print("  Unmonitoring...", end=" ", flush=True)
                 radarr.unmonitor(movie_id)
                 print("OK")
-                
+
                 if file_id:
                     print("  Deleting file record...", end=" ", flush=True)
                     radarr.delete_moviefile(file_id)
                     print("OK")
-                
+
                 print("  Re-monitoring...", end=" ", flush=True)
                 radarr.monitor(movie_id)
                 print("OK")
-                
+
                 print("  Triggering search...", end=" ", flush=True)
                 cmd_id = radarr.search(movie_id)
                 db.mark_researching(conn, folder_path)

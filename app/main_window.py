@@ -84,6 +84,17 @@ def _size_display(size_bytes: int) -> str:
     return f"{size_bytes / 1024:.0f}K"
 
 
+# Per-file ffmpeg timeout options (label -> seconds; 0 means no limit)
+_TIMEOUT_MAP = {
+    "30 min":   1800,
+    "1 hr":     3600,
+    "2 hr":     7200,
+    "4 hr":    14400,
+    "8 hr":    28800,
+    "No limit":    0,
+}
+
+
 class MainWindow(QMainWindow):
     """Main application window."""
     
@@ -181,6 +192,18 @@ class MainWindow(QMainWindow):
         self._workers_combo.setFixedWidth(60)
         self._workers_combo.setToolTip("Number of movies to scan simultaneously (1-8). Higher = faster but uses more CPU/disk.")
         scan_row.addWidget(self._workers_combo)
+        
+        scan_row.addSpacing(16)
+        scan_row.addWidget(QLabel("Timeout/file:"))
+        self._timeout_combo = QComboBox()
+        for label in _TIMEOUT_MAP:
+            self._timeout_combo.addItem(label)
+        self._timeout_combo.setCurrentText("30 min")
+        self._timeout_combo.setFixedWidth(90)
+        self._timeout_combo.setToolTip(
+            "Per-file ffmpeg timeout. Increase when scanning over a slow network connection."
+        )
+        scan_row.addWidget(self._timeout_combo)
         
         scan_row.addStretch()
         
@@ -496,6 +519,7 @@ class MainWindow(QMainWindow):
             self._lib_is.setEnabled(False)
             self._lib_tz.setEnabled(False)
             self._workers_combo.setEnabled(False)
+            self._timeout_combo.setEnabled(False)
             self._scan_btn.setEnabled(False)
             self._stop_btn.setEnabled(False)
             # Load all results from database
@@ -508,6 +532,7 @@ class MainWindow(QMainWindow):
             self._lib_is.setEnabled(True)
             self._lib_tz.setEnabled(True)
             self._workers_combo.setEnabled(True)
+            self._timeout_combo.setEnabled(True)
             self._scan_btn.setEnabled(True)
             self._stop_btn.setEnabled(False)
             # Clear live scan tracking and table
@@ -519,10 +544,9 @@ class MainWindow(QMainWindow):
     @Slot()
     def _start_scan(self):
         """Start library scan."""
-        # Switch to live mode if not already
+        # Switch to live mode if not already, then fall through to start the scan
         if self._view_mode == "database":
             self._view_mode_combo.setCurrentText("Live Scan (Start Fresh)")
-            return  # Will trigger mode change which clears table, then user clicks Start Scan again
         
         # Table is already cleared when switching to Live mode
         
@@ -541,6 +565,7 @@ class MainWindow(QMainWindow):
             return
         
         workers = int(self._workers_combo.currentText())
+        timeout_sec = _TIMEOUT_MAP.get(self._timeout_combo.currentText(), 1800)
         
         # Disable scan controls during scan (but leave action buttons enabled)
         self._scan_btn.setEnabled(False)
@@ -549,6 +574,7 @@ class MainWindow(QMainWindow):
         self._lib_is.setEnabled(False)
         self._lib_tz.setEnabled(False)
         self._workers_combo.setEnabled(False)
+        self._timeout_combo.setEnabled(False)
         
         # Reset progress bar to definite mode (no pulsing)
         self._progress_bar.setRange(0, 100)
@@ -556,9 +582,10 @@ class MainWindow(QMainWindow):
         self._progress_bar.setFormat("Starting...")
         
         # Start worker (worker will create its own DB connection)
-        self._worker = ScanWorker(roots, workers, rescan=False, limit=None)
+        self._worker = ScanWorker(roots, workers, rescan=False, limit=None, timeout_sec=timeout_sec)
         self._worker.discovery.connect(self._on_discovery)
         self._worker.scan_start.connect(self._on_scan_start)
+        self._worker.scan_size_known.connect(self._on_scan_size_known)
         self._worker.progress.connect(self._on_progress)
         self._worker.file_progress.connect(self._on_file_progress)
         self._worker.result_row.connect(self._on_result_row)
@@ -576,6 +603,7 @@ class MainWindow(QMainWindow):
         try:
             self._worker.discovery.disconnect()
             self._worker.scan_start.disconnect()
+            self._worker.scan_size_known.disconnect()
             self._worker.progress.disconnect()
             self._worker.file_progress.disconnect()
             self._worker.result_row.disconnect()
@@ -598,6 +626,21 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         
+        # Reset any folders still stuck in SCANNING state (worker was killed
+        # before it could write their results) back to UNKNOWN so they get
+        # picked up on the next scan.
+        try:
+            table = db._files_table(self._db_conn)
+            ph = db._ph(self._db_conn)
+            db._execute(
+                self._db_conn,
+                f"UPDATE {table} SET scan_state = 'UNKNOWN', worker_id = NULL, lock_until = NULL "
+                f"WHERE scan_state = {ph}",
+                ("SCANNING",),
+            )
+        except Exception:
+            pass
+        
         # Reset UI - stop the pulsating animation by setting a definite range
         self._progress_label.setText("Scan stopped")
         self._progress_bar.setRange(0, 100)  # Definite range stops pulsing
@@ -613,6 +656,7 @@ class MainWindow(QMainWindow):
             self._lib_is.setEnabled(True)
             self._lib_tz.setEnabled(True)
             self._workers_combo.setEnabled(True)
+            self._timeout_combo.setEnabled(True)
     
     def _kill_ffmpeg_processes(self):
         """Kill any ffmpeg processes that may be orphaned."""
@@ -672,6 +716,23 @@ class MainWindow(QMainWindow):
             "notes": None,
         }
         self._add_file_row(row_data)
+    
+    @Slot(str, "qint64")
+    def _on_scan_size_known(self, folder_path: str, size_bytes: int):
+        """Update size cell as soon as file is found, before null_decode starts."""
+        if self._view_mode != "live":
+            return
+        normalized_path = str(Path(folder_path))
+        for row in range(self._table.rowCount()):
+            folder_item = self._table.item(row, COL_FOLDER)
+            if folder_item:
+                row_path = folder_item.data(Qt.ItemDataRole.UserRole)
+                if row_path and str(Path(row_path)) == normalized_path:
+                    size_item = self._table.item(row, COL_SIZE)
+                    if size_item:
+                        size_item.setText(_size_display(size_bytes))
+                        size_item.setData(Qt.ItemDataRole.UserRole + 1, size_bytes)
+                    break
     
     @Slot(str, float)
     def _on_file_progress(self, folder_path: str, elapsed_sec: float):
@@ -817,6 +878,7 @@ class MainWindow(QMainWindow):
         self._lib_is.setEnabled(True)
         self._lib_tz.setEnabled(True)
         self._workers_combo.setEnabled(True)
+        self._timeout_combo.setEnabled(True)
         
         # Clean up worker
         if self._worker:

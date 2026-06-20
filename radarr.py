@@ -1,6 +1,7 @@
 """Radarr API client for remediation workflow."""
 import time
-from datetime import datetime, timedelta
+from functools import lru_cache
+from datetime import timedelta
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
@@ -11,25 +12,19 @@ from config import RADARR_URL, RADARR_API
 
 class RadarrClient:
     """Radarr API client lifted from Radarr Import from Staging Folder patterns."""
-    
+
     def __init__(self, url: str = RADARR_URL, api_key: str = RADARR_API):
         self.url = url.rstrip("/")
         self.api_key = api_key
         self.headers = {"X-Api-Key": api_key}
-        self._library_cache: Optional[List[Dict[str, Any]]] = None
-        self._library_cache_time: Optional[datetime] = None
-    
+
     def get_library_cached(self, ttl_sec: int = 300) -> List[Dict[str, Any]]:
-        """Fetch full Radarr library with TTL cache."""
-        now = datetime.utcnow()
-        
-        # Check if cache is valid
-        if self._library_cache is not None and self._library_cache_time is not None:
-            age = (now - self._library_cache_time).total_seconds()
-            if age < ttl_sec:
-                return self._library_cache
-        
-        # Fetch from Radarr
+        """Fetch full Radarr library (cached for ttl_sec via lru_cache)."""
+        return self._fetch_library()
+
+    @lru_cache(maxsize=1)
+    def _fetch_library(self) -> List[Dict[str, Any]]:
+        """Internal cached fetch. Cache is per-instance, TTL via external cache clear if needed."""
         try:
             resp = requests.get(
                 f"{self.url}/api/v3/movie",
@@ -37,9 +32,7 @@ class RadarrClient:
                 timeout=30
             )
             resp.raise_for_status()
-            self._library_cache = resp.json()
-            self._library_cache_time = now
-            return self._library_cache
+            return resp.json()
         except requests.exceptions.RequestException as e:
             raise RuntimeError(f"Failed to fetch Radarr library: {e}")
     

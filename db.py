@@ -269,14 +269,7 @@ def _ph(conn: RepairDBConnection) -> str:
     return "%s" if conn.backend == "postgres" else "?"
 
 
-def _now() -> str:
-    """ISO8601 UTC timestamp string with explicit Z suffix.
-
-    Both backends accept this format:
-      - SQLite stores it as plain text
-      - Postgres parses it into TIMESTAMPTZ as UTC (no ambiguous interpretation)
-    """
-    return datetime.utcnow().isoformat() + "Z"
+# ISO8601 UTC timestamp: datetime.utcnow().isoformat() + "Z"
 
 
 def _row_to_dict(row, conn: RepairDBConnection) -> Dict[str, Any]:
@@ -329,7 +322,7 @@ def upsert_file_record(conn: RepairDBConnection, record: Dict[str, Any]):
     """Insert or update a file record."""
     table = _files_table(conn)
     ph = _ph(conn)
-    now = _now()
+    now = datetime.utcnow().isoformat() + "Z"
 
     existing = _fetchone(
         conn,
@@ -427,7 +420,7 @@ def record_run_start(conn: RepairDBConnection, kind: str, args: Dict[str, Any]) 
     """Record the start of a scan or remediate run. Returns run_id."""
     table = _runs_table(conn)
     ph = _ph(conn)
-    now = _now()
+    now = datetime.utcnow().isoformat() + "Z"
 
     if conn.backend == "postgres":
         with conn.raw.cursor() as cur:
@@ -453,7 +446,7 @@ def record_run_finish(conn: RepairDBConnection, run_id: int, stats: Dict[str, An
     """Update run record with completion stats."""
     table = _runs_table(conn)
     ph = _ph(conn)
-    now = _now()
+    now = datetime.utcnow().isoformat() + "Z"
 
     sql = f"""
         UPDATE {table} SET
@@ -487,7 +480,7 @@ def mark_queued(conn: RepairDBConnection, folder_paths: List[str]):
     """Mark files as QUEUED for remediation."""
     table = _files_table(conn)
     ph = _ph(conn)
-    now = _now()
+    now = datetime.utcnow().isoformat() + "Z"
     for path in folder_paths:
         _execute(
             conn,
@@ -501,7 +494,7 @@ def mark_deleted(conn: RepairDBConnection, folder_path: str):
     """Mark file as DELETED (and increment attempts)."""
     table = _files_table(conn)
     ph = _ph(conn)
-    now = _now()
+    now = datetime.utcnow().isoformat() + "Z"
     _execute(
         conn,
         f"UPDATE {table} SET remediation = 'DELETED', remediation_at = {ph}, "
@@ -514,7 +507,7 @@ def mark_researching(conn: RepairDBConnection, folder_path: str):
     """Mark file as RESEARCHING (Radarr search triggered)."""
     table = _files_table(conn)
     ph = _ph(conn)
-    now = _now()
+    now = datetime.utcnow().isoformat() + "Z"
     _execute(
         conn,
         f"UPDATE {table} SET remediation = 'RESEARCHING', remediation_at = {ph} "
@@ -527,7 +520,7 @@ def mark_remediated(conn: RepairDBConnection, folder_path: str):
     """Mark file as REMEDIATED (scan verified clean after re-acquisition)."""
     table = _files_table(conn)
     ph = _ph(conn)
-    now = _now()
+    now = datetime.utcnow().isoformat() + "Z"
     _execute(
         conn,
         f"UPDATE {table} SET remediation = 'REMEDIATED', remediation_at = {ph} "
@@ -540,7 +533,7 @@ def mark_failed(conn: RepairDBConnection, folder_path: str, error_msg: str):
     """Mark file as FAILED with error message."""
     table = _files_table(conn)
     ph = _ph(conn)
-    now = _now()
+    now = datetime.utcnow().isoformat() + "Z"
     _execute(
         conn,
         f"UPDATE {table} SET remediation = 'FAILED', remediation_at = {ph}, "
@@ -553,7 +546,7 @@ def mark_skipped(conn: RepairDBConnection, folder_path: str):
     """Mark file as SKIPPED (user doesn't want to remediate)."""
     table = _files_table(conn)
     ph = _ph(conn)
-    now = _now()
+    now = datetime.utcnow().isoformat() + "Z"
     _execute(
         conn,
         f"UPDATE {table} SET remediation = 'SKIPPED', remediation_at = {ph} "
@@ -566,7 +559,7 @@ def mark_none(conn: RepairDBConnection, folder_path: str):
     """Reset remediation state to NONE (remove from queue, undo skip, etc.)."""
     table = _files_table(conn)
     ph = _ph(conn)
-    now = _now()
+    now = datetime.utcnow().isoformat() + "Z"
     _execute(
         conn,
         f"UPDATE {table} SET remediation = 'NONE', remediation_at = {ph} "
@@ -579,7 +572,7 @@ def mark_missing(conn: RepairDBConnection, folder_path: str):
     """Mark a folder as MISSING (no longer exists on disk)."""
     table = _files_table(conn)
     ph = _ph(conn)
-    now = _now()
+    now = datetime.utcnow().isoformat() + "Z"
     _execute(
         conn,
         f"UPDATE {table} SET scan_state = 'MISSING', last_scan_at = {ph} "
