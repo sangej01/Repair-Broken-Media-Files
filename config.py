@@ -49,8 +49,8 @@ POSTGRES_HOST_CANDIDATES = [
 ]
 
 # Worker identification — used to track which PC scanned which folder
-# when DB_BACKEND=postgres (multi-PC mode).
-WORKER_ID = os.getenv("WORKER_ID", socket.gethostname())
+# when DB_BACKEND=postgres (multi-PC mode). Defaults to machine hostname.
+WORKER_ID = socket.gethostname()  # override here if needed
 
 # Logs directory
 LOGS_DIR = Path(__file__).parent / "logs"
