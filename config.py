@@ -29,7 +29,7 @@ EMAIL_APP_PASSWORD = os.getenv("EMAIL_APP_PASSWORD", "")
 # ── Database backend selection ────────────────────────────────────────────────
 # 'sqlite' (default) — single PC, repair.db in this directory
 # 'postgres'         — shared LAN database for multi-PC scanning
-DB_BACKEND = os.getenv("DB_BACKEND", "sqlite").lower().strip()
+DB_BACKEND = "sqlite"
 
 # SQLite database path (used when DB_BACKEND=sqlite)
 DB_PATH = Path(__file__).parent / "repair.db"
