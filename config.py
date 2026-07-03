@@ -42,9 +42,9 @@ DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 # Postgres host fallback list — tried in order; first to connect wins.
 # Lets you use LAN IP at home, Tailscale when remote, without changing .env.
 POSTGRES_HOST_CANDIDATES = [
-    "192.168.1.238",       # local LAN (fastest when on home network)
-    "casaos",              # Tailscale DNS name
-    "100.102.164.45",      # Tailscale IP (last resort)
+    "192.168.1.238",                    # local LAN (fastest when on home network)
+    "casaos.tail425a06.ts.net",         # Tailscale DNS name
+    "100.102.164.45",                   # Tailscale IP (last resort)
 ]
 
 # Worker ID — tags DB records with which PC did the scan (multi-PC mode)
