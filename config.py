@@ -1,15 +1,26 @@
 """Configuration loader for Repair Broken Media Files."""
 import os
 import socket
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load .env file
-load_dotenv()
+if getattr(sys, "frozen", False):
+    SCRIPT_DIR = Path(sys.executable).parent
+else:
+    SCRIPT_DIR = Path(__file__).parent
+
+if os.getenv("LAUNCHED_FROM_MEDIA_TOOLS_LAUNCHER"):
+    load_dotenv(SCRIPT_DIR.parent / ".env", override=True)
+    load_dotenv(SCRIPT_DIR / ".env", override=True)
+else:
+    load_dotenv(SCRIPT_DIR / ".env", override=True)
 
 # Radarr connection
-RADARR_URL = os.getenv("RADARR_URL", "http://mforum-ms01-a:8989")
-RADARR_API = os.getenv("RADARR_API", "")
+RADARR_HOST = os.getenv("RADARR_URL", "http://mforum-ms01-a.tail425a06.ts.net")
+RADARR_PORT = os.getenv("RADARR_PORT", "8989")
+RADARR_URL  = f"{RADARR_HOST.rstrip('/')}:{RADARR_PORT}"
+RADARR_API  = os.getenv("RADARR_API", "")
 
 # Email (deferred to v2)
 EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS", "")
