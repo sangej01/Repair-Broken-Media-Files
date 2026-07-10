@@ -9,7 +9,7 @@ Backend selection is via DB_BACKEND in .env:
   - 'postgres'           — shared LAN database, multi-PC distributed scanning
 
 The PostgreSQL backend uses tables `repair_files` and `repair_runs` to avoid
-collision with `Movie-Library-Compressor`'s tables in the same database.
+collision with `Movie Library Compressor`'s tables in the same database.
 """
 import json
 import re
@@ -193,7 +193,7 @@ def _substitute_dsn_host(dsn: str, new_host: str) -> str:
     """Replace the host portion of a postgres DSN with new_host.
 
     Example: postgresql://user:pw@oldhost:5432/db  →  postgresql://user:pw@<new_host>:5432/db
-    Lifted from Movie-Library-Compressor/tracker.py.
+    Lifted from Movie Library Compressor/tracker.py.
     """
     return re.sub(
         r"(@)([^:/]+)(:\d+)?(/)",

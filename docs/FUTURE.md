@@ -41,13 +41,13 @@ What's still pending (Phase 4-5 below):
 
 **Problem:** Scanning a 3,600-movie library on a single PC takes 24-48 hours. With multiple PCs (ms01-a, geekom-gt1-a, beelink-nyc, etc.) sitting idle, we could parallelize across machines.
 
-**Approach: Lift the proven pattern from `Movie-Library-Compressor/tracker.py`**
+**Approach: Lift the proven pattern from `Movie Library Compressor/tracker.py`**
 
 That tool already implements exactly what we need: a pluggable backend (SQLite or PostgreSQL) where multiple hosts share a Postgres database. We can copy its design directly.
 
 #### Reference Implementation
 
-`Movie-Library-Compressor/src/compressor/tracker.py` does this with:
+`Movie Library Compressor/src/compressor/tracker.py` does this with:
 
 1. **Abstract base class** `TrackerDB` defines the interface
 2. **`SQLiteTrackerDB`** - default, single-PC (per-host file)
@@ -145,7 +145,7 @@ raise ConnectionError("Could not reach PostgreSQL via any host")
 - Single source of truth (no SQLite syncing headaches)
 - GUI runs anywhere, sees same data
 - Workers can be added/removed dynamically
-- Already have PostgreSQL running for `Movie-Library-Compressor`
+- Already have PostgreSQL running for `Movie Library Compressor`
 - **Reuses proven pattern** - tracker.py has been running in production
 
 #### Backwards Compatibility
@@ -162,8 +162,8 @@ raise ConnectionError("Could not reach PostgreSQL via any host")
 - **Total: ~22 hours** (could be less by directly lifting tracker.py code)
 
 #### Files to Reference
-- `Movie-Library-Compressor/src/compressor/tracker.py` — the pattern to copy
-- `Movie-Library-Compressor/src/compressor/config.py` — POSTGRES_HOST_CANDIDATES handling
+- `Movie Library Compressor/src/compressor/tracker.py` — the pattern to copy
+- `Movie Library Compressor/src/compressor/config.py` — POSTGRES_HOST_CANDIDATES handling
 
 ---
 
@@ -236,7 +236,7 @@ When remediation finds repeated corruption from same release:
 - Severity ratings
 - Suggest specific remediation strategies based on error type
 
-### Integration with Movie-Library-Compressor's PostgreSQL Tracker
+### Integration with Movie Library Compressor's PostgreSQL Tracker
 - Read existing tracker to skip "we already know this is fine" folders
 - Speed up scans by leveraging existing data
 - Combined with Phase 1-5 above, this is natural
@@ -264,7 +264,7 @@ When remediation finds repeated corruption from same release:
 ## Architecture Notes
 
 ### Why PostgreSQL for Multi-PC?
-- Already running for `Movie-Library-Compressor`
+- Already running for `Movie Library Compressor`
 - ACID transactions handle race conditions
 - `SELECT FOR UPDATE SKIP LOCKED` is the gold standard for distributed work queues
 - Easy backup/restore

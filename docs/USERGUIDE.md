@@ -383,7 +383,7 @@ The tool supports two database backends, selected via `DB_BACKEND` in `.env`:
 
 #### **PostgreSQL** — multi-PC distributed scanning
 - Connection: shared LAN/Tailscale Postgres server
-- Tables: `repair_files`, `repair_runs` (named differently to coexist with `Movie-Library-Compressor`)
+- Tables: `repair_files`, `repair_runs` (named differently to coexist with `Movie Library Compressor`)
 - Configure in `.env`:
   ```
   DB_BACKEND=postgres
@@ -530,7 +530,7 @@ VERIFY_LEVEL = 3  # Full ffmpeg null-decode
 - Prevents re-acquiring bad files
 - Completes the remediation loop
 
-### Movie-Library-Compressor
+### Movie Library Compressor
 
 Reads library roots from `compressor.yaml`:
 ```yaml

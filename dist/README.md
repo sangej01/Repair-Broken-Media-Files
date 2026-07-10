@@ -199,7 +199,7 @@ Re-scan → State: REMEDIATED
 ### Pluck Movies
 Set `VERIFY_LEVEL = 3` in `config/movies.py` to catch corruption before import.
 
-### Movie-Library-Compressor
+### Movie Library Compressor
 Reads library roots from `compressor.yaml` automatically.
 
 ### Radarr Import

@@ -57,13 +57,13 @@ LOGS_DIR.mkdir(exist_ok=True)
 
 def get_library_roots():
     """
-    Discover library roots from Movie-Library-Compressor/compressor.yaml.
+    Discover library roots from Movie Library Compressor/compressor.yaml.
     Returns list of Path objects for each unique library_path under hosts:.
     Falls back to default roots if compressor.yaml is not found.
     """
     try:
         import yaml
-        compressor_yaml = Path(__file__).parent.parent / "Movie-Library-Compressor" / "compressor.yaml"
+        compressor_yaml = Path(__file__).parent.parent / "Movie Library Compressor" / "compressor.yaml"
         
         if compressor_yaml.exists():
             with open(compressor_yaml, "r") as f:
