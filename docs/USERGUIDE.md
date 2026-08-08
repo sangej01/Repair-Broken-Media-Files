@@ -198,6 +198,20 @@ The app has two view modes accessible via the dropdown at the top:
   - 2 = ⚠️ Bold orange - second attempt (something's wrong)
   - 3+ = 🔴 Bold red - persistent issue (systematic problem!)
 
+#### Status vs Remediation (two different columns):
+
+These two columns track independent things and are easy to confuse:
+
+- **Status** = *what the scan found* (the file's condition) — CLEAN, CORRUPT,
+  TIMEOUT, ERROR, EMPTY, MISSING, SCANNING, UNKNOWN. Set by the scanner.
+- **Remediation** = *what you've done about it* (the fix-it workflow) — NONE,
+  QUEUED, DELETED, RESEARCHING, REMEDIATED, FAILED, SKIPPED. Set by you / Radarr.
+
+Think **diagnosis (Status)** vs **treatment plan (Remediation)**. A file can be
+`CORRUPT` (Status) and `RESEARCHING` (Remediation) at the same time. Hover the
+column headers in the app for a quick reminder. Full breakdown of every control and
+both columns is in **[INTERFACE.md](INTERFACE.md)**.
+
 #### Status Colors:
 - 🟢 **CLEAN** (green) - File passed integrity check
 - 🔴 **CORRUPT** (red, bold) - File has structural corruption
