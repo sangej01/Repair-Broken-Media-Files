@@ -70,6 +70,13 @@ HEADERS = ["", "Folder", "Size", "Status", "Reason", "Remediation", "Attempts"]
 PROBLEMATIC_FILTER_LABEL = "Problematic"
 PROBLEMATIC_STATES = {"TIMEOUT", "UNKNOWN", "ERROR"}
 
+# Remediation states meaning the original file has been deleted and a fresh
+# download requested from Radarr. Rows in these states are shown grayed-out and
+# italicized: the listed original is gone / being replaced.
+REMEDIATED_REMEDIATION_STATES = {"DELETED", "RESEARCHING", "REMEDIATED"}
+# Muted foreground for grayed-out remediated rows (Catppuccin "overlay0").
+REMEDIATED_ROW_COLOR = "#6c7086"
+
 # State colors (Catppuccin Mocha palette)
 STATE_COLORS = {
     "CLEAN": "#a6e3a1",     # Green
@@ -551,6 +558,26 @@ class MainWindow(QMainWindow):
         
         # Store full path in user data
         folder_item.setData(Qt.ItemDataRole.UserRole, file_dict["folder_path"])
+        
+        # Grayed-out + italic when a delete + re-download has been requested:
+        # the original listing has been removed / is being replaced by Radarr.
+        if remed in REMEDIATED_REMEDIATION_STATES:
+            self._style_row_remediated(row)
+    
+    def _style_row_remediated(self, row: int):
+        """Gray out and italicize every text cell in a row to show the original
+        file has been deleted and a fresh download requested from Radarr."""
+        muted = QColor(REMEDIATED_ROW_COLOR)
+        for col in range(self._table.columnCount()):
+            item = self._table.item(row, col)
+            if item is None:
+                continue
+            font = item.font()
+            font.setItalic(True)
+            # Drop any bold emphasis (e.g. CORRUPT) now that it's remediated.
+            font.setBold(False)
+            item.setFont(font)
+            item.setForeground(muted)
     
     @Slot()
     def _apply_filter(self):

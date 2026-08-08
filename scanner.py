@@ -246,12 +246,40 @@ def largest_video_in_folder(folder: Path) -> Optional[Path]:
     return best
 
 
+def _is_benign_muxer_line(low_line: str) -> bool:
+    """True for output-side ffmpeg noise that is NOT file corruption.
+
+    The `-f null` output muxer emits "non monotonically increasing dts to muxer"
+    warnings (from `[null @ ...]` / `[out#...]`) for many perfectly playable
+    files — especially B-frame rips with re-ordered timestamps. These must not
+    be treated as corruption. A genuine *input/decode-side* DTS problem (e.g.
+    from `[matroska,webm @ ...]`) does not carry the "to muxer" phrasing and is
+    still caught.
+    """
+    return (
+        "dts to muxer" in low_line
+        or "provided invalid, non monotonic" in low_line
+        or "provided invalid, non-monotonic" in low_line
+        or low_line.lstrip().startswith("[null @")
+        or low_line.lstrip().startswith("[out#")
+    )
+
+
 def _classify_stderr(stderr: str) -> str:
-    """Check if stderr contains trouble keywords."""
-    low = stderr.lower()
-    for kw in TROUBLE_KEYWORDS:
-        if kw in low:
-            return "CORRUPT"
+    """Check if stderr contains trouble keywords, ignoring benign muxer noise.
+
+    Classifies line-by-line so a benign `-f null` muxer DTS warning on one line
+    can't mask (or, worse, fabricate) a corruption verdict.
+    """
+    for raw in (stderr or "").splitlines():
+        low = raw.lower()
+        if not low.strip():
+            continue
+        if _is_benign_muxer_line(low):
+            continue
+        for kw in TROUBLE_KEYWORDS:
+            if kw in low:
+                return "CORRUPT"
     return "CLEAN"
 
 
@@ -663,6 +691,73 @@ def deep_inspect(video_path: Path, progress_callback: Optional[Callable] = None)
     }
 
 
+# Substrings that mark an stderr line as BENIGN output-side noise rather than
+# real corruption. The dominant one is the `-f null` muxer complaining about
+# non-monotonic DTS, which many clean B-frame rips produce in huge volume.
+_BENIGN_ERROR_MARKERS = (
+    "non monotonically increasing dts to muxer",
+    "non-monotonically increasing dts to muxer",
+    "application provided invalid, non monotonically",
+    "application provided invalid, non-monotonically",
+    "dts to muxer",
+    "[null @",          # the null output muxer itself
+    "[out#",            # output-stream bookkeeping
+    "last message repeated",
+)
+
+# Substrings that DO indicate genuine decode/demux corruption. If any of these
+# appear the line is counted regardless of the benign filter above.
+_REAL_ERROR_MARKERS = (
+    "error while decoding",
+    "concealing",
+    "corrupt",
+    "truncated",
+    "invalid nal unit size",
+    "missing picture",
+    "no frame",
+    "decode_slice",
+    "missing reference",
+    "could not find codec parameters",
+    "invalid data found",
+    "ended prematurely",
+    "non-existing pps",
+    "non-existing sps",
+    "sei type",
+    "mmco",
+    "illegal",
+    "out of range",
+    "marker does not match",
+    "exceeds containing master element",  # broken MKV element sizes
+    "ac-tex damaged",
+    "slice mismatch",
+    "cbp too large",
+    "error splitting the input",
+)
+
+
+def _is_real_decode_error(line: str) -> bool:
+    """Decide whether an ffmpeg -v error stderr line is genuine corruption.
+
+    The full-decode uses `-f null`, whose muxer prints benign non-monotonic DTS
+    warnings for many perfectly playable files. Those must not be counted as
+    corruption. A line counts as a real error only when it contains a known
+    corruption marker AND is not purely benign output-muxer noise.
+    """
+    low = line.lower()
+    # Real-corruption markers win outright.
+    for kw in _REAL_ERROR_MARKERS:
+        if kw in low:
+            return True
+    # Otherwise, drop known-benign output/muxer chatter.
+    for kw in _BENIGN_ERROR_MARKERS:
+        if kw in low:
+            return False
+    # Unknown line at -v error: be conservative and DO NOT count it. Genuine
+    # corruption almost always matches a real marker above; anything else is
+    # far more likely to be muxer/output bookkeeping than actual damage.
+    return False
+
+
 def full_decode_error_map(video_path: Path, duration_sec: Optional[float] = None,
                           progress_callback: Optional[Callable] = None,
                           cancel_flag: Optional[Callable] = None) -> dict:
@@ -707,13 +802,14 @@ def full_decode_error_map(video_path: Path, duration_sec: Optional[float] = None
     # We need two things at once, from two separate ffmpeg streams:
     #   * stdout: machine-readable "-progress pipe:1" emits `out_time_us=<n>`
     #     very frequently (per packet) — our reliable decode-position clock.
-    #   * stderr: at "-v error", one line per corrupt frame/packet — the errors.
+    #   * stderr: at "-v error", lines about decode/demux problems — BUT also
+    #     harmless muxer chatter we must NOT count (see _is_real_decode_error).
     # A background thread consumes stdout progress and updates a shared
-    # `last_time_sec[0]`; the main loop reads stderr and stamps each error with
-    # whatever the current decode position is. This localizes damage far more
-    # accurately than parsing the sparse "-stats" line.
+    # `last_time_sec[0]`; the main loop reads stderr and stamps each real error
+    # with whatever the current decode position is.
     proc = None
     error_points: List[Tuple[float, str]] = []
+    ignored_lines: List[str] = []  # benign noise, kept only for the report
     last_time_sec = [0.0]          # boxed so the reader thread can mutate it
     reader_thread = None
 
@@ -777,7 +873,15 @@ def full_decode_error_map(video_path: Path, duration_sec: Optional[float] = None
             if not line:
                 continue
 
-            # Every stderr line at -v error is a real decode/demux error.
+            # Not every -v error line is corruption. The `-f null` output muxer
+            # emits benign "non monotonically increasing dts to muxer" style
+            # warnings for many perfectly playable files (B-frame / edited-DTS
+            # rips). Only count lines that indicate real decode/demux damage.
+            if not _is_real_decode_error(line):
+                if len(ignored_lines) < 20:
+                    ignored_lines.append(line)
+                continue
+
             error_points.append((last_time_sec[0], line))
 
             # Emit a throttled progress update off the current decode position.
@@ -845,10 +949,19 @@ def full_decode_error_map(video_path: Path, duration_sec: Optional[float] = None
     #   - many errors OR spread across most of the file → decide RE-DOWNLOAD vs BAD SOURCE
     if error_count == 0:
         verdict = "CLEAN"
-        recommendation = (
-            "A full decode found NO errors. The earlier CORRUPT flag was likely "
-            "transient (a slow NAS read or a since-fixed file). Re-scan to clear it."
-        )
+        if ignored_lines:
+            recommendation = (
+                "A full decode found NO real corruption. ffmpeg did emit "
+                f"{len(ignored_lines)}+ benign muxer timestamp warnings (non-monotonic "
+                "DTS from the '-f null' output), but those do NOT indicate a broken "
+                "file — many perfectly playable B-frame rips produce them. This file "
+                "is almost certainly fine; re-scan to clear the CORRUPT flag."
+            )
+        else:
+            recommendation = (
+                "A full decode found NO errors. The earlier CORRUPT flag was likely "
+                "transient (a slow NAS read or a since-fixed file). Re-scan to clear it."
+            )
     elif error_count <= 5 and affected_buckets <= 2:
         verdict = "PLAYABLE"
         recommendation = (
@@ -884,6 +997,9 @@ def full_decode_error_map(video_path: Path, duration_sec: Optional[float] = None
     lines.append(f"Total decode errors: {error_count}")
     lines.append(f"Timeline coverage : {affected_buckets}/{N_BUCKETS} segments affected "
                  f"({spread_pct:.0f}% of runtime)")
+    if ignored_lines:
+        lines.append(f"Ignored (benign)  : {len(ignored_lines)}+ muxer/output warnings "
+                     f"(non-monotonic DTS etc.) — not corruption")
     lines.append("")
 
     if error_count > 0:
@@ -912,6 +1028,15 @@ def full_decode_error_map(video_path: Path, duration_sec: Optional[float] = None
             shown += 1
             if shown >= 8:
                 break
+        lines.append("")
+
+    # When there was no real corruption but we saw benign muxer noise, show a
+    # couple of examples so it's clear what was (correctly) ignored.
+    if error_count == 0 and ignored_lines:
+        lines.append("=== Ignored (benign muxer/output warnings) ===")
+        for msg in ignored_lines[:5]:
+            lines.append(f"  {msg[:160]}")
+        lines.append("  (These are output-side timestamp warnings, not file damage.)")
         lines.append("")
 
     lines.append("=== VERDICT ===")

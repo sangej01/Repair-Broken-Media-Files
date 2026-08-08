@@ -92,6 +92,111 @@ def cli_scan(args):
     conn.close()
 
 
+def cli_rescan_corrupt(args):
+    """CLI: repair rescan-corrupt
+
+    Re-scan folders currently flagged CORRUPT (and, optionally, other
+    non-definitive states) with the current decoder. Use this to clear stale
+    false positives after a classifier fix — it actually re-decodes each file
+    rather than trusting the old stored verdict.
+    """
+    parser = argparse.ArgumentParser(
+        description="Re-scan folders currently flagged CORRUPT (and optionally "
+                    "TIMEOUT/ERROR/UNKNOWN) to refresh their verdict."
+    )
+    parser.add_argument("--workers", type=int, default=2,
+                        help="Concurrent ffmpeg workers (default: 2)")
+    parser.add_argument("--timeout", type=int, default=1800,
+                        help="Per-file ffmpeg timeout in seconds (default: 1800)")
+    parser.add_argument("--states", default="CORRUPT",
+                        help="Comma-separated scan states to re-scan "
+                             "(default: CORRUPT). e.g. CORRUPT,TIMEOUT,ERROR,UNKNOWN")
+    parser.add_argument("--limit", type=int, help="Limit to N folders (for testing)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="List the folders that would be re-scanned, then exit")
+    opts = parser.parse_args(args)
+
+    states = [s.strip().upper() for s in opts.states.split(",") if s.strip()]
+
+    conn = db.init_db()
+
+    # Collect folders in the requested states that still exist on disk.
+    targets = []
+    missing = []
+    for state in states:
+        for r in db.get_files(conn, filter_state=state):
+            p = Path(r["folder_path"])
+            if p.exists():
+                targets.append(p)
+            else:
+                missing.append(p)
+
+    # De-dupe while preserving order.
+    seen = set()
+    unique_targets = []
+    for p in targets:
+        key = str(p)
+        if key not in seen:
+            seen.add(key)
+            unique_targets.append(p)
+    targets = unique_targets
+
+    if opts.limit:
+        targets = targets[:opts.limit]
+
+    print(f"Re-scan states: {', '.join(states)}")
+    print(f"Folders to re-scan: {len(targets)}"
+          + (f"  ({len(missing)} skipped - no longer on disk)" if missing else ""))
+    for p in targets:
+        print(f"  {p}")
+
+    if not targets:
+        print("\nNothing to re-scan.")
+        conn.close()
+        return
+
+    if opts.dry_run:
+        print("\n[dry-run] No scan performed.")
+        conn.close()
+        return
+
+    run_id = db.record_run_start(conn, "rescan-corrupt", {
+        "workers": opts.workers,
+        "states": states,
+        "count": len(targets),
+    })
+
+    start_time = time.time()
+
+    def progress(current, total, folder_path, state):
+        folder_name = Path(folder_path).name if folder_path else ""
+        flag = "  ★" if state == "CORRUPT" else ""
+        print(f"[{current:>4}/{total}] {state:7s}  {folder_name}{flag}", flush=True)
+
+    print("\nRe-scanning (rescan=True on the target folders)...")
+    # Pass the explicit folder list; rescan=True so the 7-day skip never applies.
+    stats = scanner.scan_library(
+        roots=[],
+        workers=opts.workers,
+        db_conn=conn,
+        progress_callback=progress,
+        rescan=True,
+        timeout_sec=opts.timeout,
+        folders=targets,
+    )
+
+    db.record_run_finish(conn, run_id, stats)
+
+    elapsed = time.time() - start_time
+    print(f"\n=== Re-scan complete in {elapsed/60:.1f} min ===")
+    print(f"  Folders done: {stats['folders_done']}")
+    print(f"  CLEAN:        {stats['clean_count']}   (these were the false positives)")
+    print(f"  CORRUPT:      {stats['corrupt_count']}   (confirmed still corrupt)")
+    print(f"  ERROR:        {stats['error_count']}")
+    print(f"  EMPTY:        {stats['empty_count']}")
+    conn.close()
+
+
 def cli_list(args):
     """CLI: repair list"""
     parser = argparse.ArgumentParser(description="List scanned files")
@@ -546,6 +651,8 @@ def main():
         cmd = sys.argv[1]
         if cmd == "scan":
             cli_scan(sys.argv[2:])
+        elif cmd == "rescan-corrupt":
+            cli_rescan_corrupt(sys.argv[2:])
         elif cmd == "list":
             cli_list(sys.argv[2:])
         elif cmd == "queue":
@@ -556,7 +663,7 @@ def main():
             cli_benchmark(sys.argv[2:])
         else:
             print(f"Unknown command: {cmd}")
-            print("Usage: repair [scan|list|queue|remediate|benchmark]")
+            print("Usage: repair [scan|rescan-corrupt|list|queue|remediate|benchmark]")
             print("       repair    (no args to launch GUI)")
             sys.exit(1)
 
