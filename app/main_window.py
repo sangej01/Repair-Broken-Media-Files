@@ -45,6 +45,7 @@ from app.workers import ScanWorker
 from app.styles import DARK_THEME
 import config
 import db
+import scanner
 
 # Table columns
 COL_SELECT = 0
@@ -60,6 +61,14 @@ COL_VERDICT = COL_STATUS
 COL_STATE = COL_REMEDIATION
 
 HEADERS = ["", "Folder", "Size", "Status", "Reason", "Remediation", "Attempts"]
+
+# Special status-filter label that matches several real states at once.
+# These are the scan states worth re-examining: the scan either never reached
+# a real verdict (UNKNOWN = interrupted, TIMEOUT = ran out of time) or couldn't
+# run at all (ERROR = ffmpeg/exec/stat failure). Re-scanning any of these can
+# legitimately produce a different outcome.
+PROBLEMATIC_FILTER_LABEL = "Problematic"
+PROBLEMATIC_STATES = {"TIMEOUT", "UNKNOWN", "ERROR"}
 
 # State colors (Catppuccin Mocha palette)
 STATE_COLORS = {
@@ -243,7 +252,19 @@ class MainWindow(QMainWindow):
         
         filter_row.addWidget(QLabel("Status:"))
         self._filter_combo = QComboBox()
-        self._filter_combo.addItems(["All", "CORRUPT", "CLEAN", "ERROR", "TIMEOUT", "EMPTY", "MISSING", "SCANNING", "UNKNOWN"])
+        # "All" and the aggregate "Problematic" shortcut sit above a dotted
+        # separator; the individual scan states sit below it.
+        self._filter_combo.addItems(["All", PROBLEMATIC_FILTER_LABEL])
+        self._filter_combo.insertSeparator(self._filter_combo.count())
+        self._filter_combo.addItems(
+            ["CORRUPT", "CLEAN", "ERROR", "TIMEOUT", "EMPTY", "MISSING", "SCANNING", "UNKNOWN"]
+        )
+        self._filter_combo.setItemData(
+            self._filter_combo.findText(PROBLEMATIC_FILTER_LABEL),
+            "Show all files worth re-scanning: TIMEOUT, UNKNOWN and ERROR "
+            "(scans that timed out, were interrupted, or failed to run).",
+            Qt.ItemDataRole.ToolTipRole,
+        )
         self._filter_combo.currentTextChanged.connect(self._apply_filter)
         self._filter_combo.setFixedWidth(120)
         filter_row.addWidget(self._filter_combo)
@@ -366,7 +387,15 @@ class MainWindow(QMainWindow):
             return
         
         # Get filter values (apply in both modes)
-        filter_state = None if self._filter_combo.currentText() == "All" else self._filter_combo.currentText()
+        status_choice = self._filter_combo.currentText()
+        # "Problematic" is an aggregate of several states, so it can't be pushed
+        # down to the single-state DB filter — we fetch unfiltered by state and
+        # narrow client-side below.
+        problematic_mode = status_choice == PROBLEMATIC_FILTER_LABEL
+        if status_choice == "All" or problematic_mode:
+            filter_state = None
+        else:
+            filter_state = status_choice
         filter_remed = None if self._remed_combo.currentText() == "Any" else self._remed_combo.currentText()
         search = self._search_box.text().lower()
         
@@ -388,6 +417,10 @@ class MainWindow(QMainWindow):
         else:
             # Database mode: show all files
             files = db.get_files(self._db_conn, filter_state=filter_state, filter_remediation=filter_remed)
+        
+        # Narrow to the problematic scan states when that shortcut is selected.
+        if problematic_mode:
+            files = [f for f in files if f.get("scan_state") in PROBLEMATIC_STATES]
         
         # Apply search filter (works in both modes)
         if search:
@@ -475,8 +508,24 @@ class MainWindow(QMainWindow):
         self._table.setItem(row, COL_VERDICT, verdict_item)
         
         # Reason (stderr tail)
-        reason = (file_dict.get("stderr_tail") or "")[:60]
+        full_reason = file_dict.get("stderr_tail") or ""
+        reason = full_reason[:60]
         reason_item = QTableWidgetItem(reason)
+        # Tooltip: full reason plus a triage explanation when recognized, so
+        # the user can see at a glance whether a re-download is likely to help.
+        tooltip = full_reason
+        triage = scanner.triage_corruption(full_reason)
+        if triage:
+            fixhint = (
+                "Re-download will LIKELY fix this."
+                if triage["fixable"]
+                else "Re-download may NOT help (source likely bad)."
+            )
+            tooltip = (
+                f"{full_reason}\n\n{triage['label']}: {triage['explanation']}\n\n{fixhint}"
+            )
+        if tooltip:
+            reason_item.setToolTip(tooltip)
         self._table.setItem(row, COL_REASON, reason_item)
         
         # Remediation state
@@ -987,11 +1036,304 @@ class MainWindow(QMainWindow):
             
             if file_record:
                 log = file_record.get("stderr_tail") or "No log available"
-                QMessageBox.information(
-                    self, 
-                    f"ffmpeg Log - {Path(path).name}", 
-                    log
+                # If the stored reason carries a triage label, append the full
+                # explanation so the user understands what the error means and
+                # whether a re-download is likely to help.
+                triage = scanner.triage_corruption(log)
+                if triage:
+                    fixhint = (
+                        "A fresh re-download will LIKELY fix this."
+                        if triage["fixable"]
+                        else "A re-download may NOT help — the source release is likely bad."
+                    )
+                    log = (
+                        f"{log}\n\n"
+                        f"── Diagnosis ──\n"
+                        f"Type: {triage['label']}\n"
+                        f"{triage['explanation']}\n\n"
+                        f"{fixhint}\n\n"
+                        f"Tip: use 'Deep Inspect (ffprobe)' to confirm whether only "
+                        f"the end of the file is broken (truncated download) versus "
+                        f"whole-file corruption."
+                    )
+                self._show_text_dialog(f"ffmpeg Log - {Path(path).name}", log)
+
+    def _show_text_dialog(self, title: str, text: str, actions: list = None):
+        """Show a resizable, scrollable, monospace text dialog.
+
+        actions: optional list of (label, callback, is_primary) tuples rendered
+        as buttons to the left of Close. Each callback runs after the dialog is
+        accepted/closed, so it can safely open its own dialogs.
+        """
+        from PySide6.QtWidgets import (
+            QDialog, QPlainTextEdit, QVBoxLayout, QHBoxLayout, QPushButton
+        )
+        from PySide6.QtGui import QFont
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(title)
+        dlg.resize(760, 560)
+        layout = QVBoxLayout(dlg)
+
+        editor = QPlainTextEdit()
+        editor.setReadOnly(True)
+        editor.setPlainText(text)
+        mono = QFont("Consolas")
+        mono.setStyleHint(QFont.StyleHint.Monospace)
+        editor.setFont(mono)
+        layout.addWidget(editor, 1)
+
+        btn_row = QHBoxLayout()
+        pending = {"cb": None}
+
+        for entry in (actions or []):
+            label, cb = entry[0], entry[1]
+            is_primary = len(entry) > 2 and entry[2]
+            b = QPushButton(label)
+            if is_primary:
+                b.setObjectName("primary")
+
+            def _make_handler(callback):
+                def _handler():
+                    pending["cb"] = callback
+                    dlg.accept()
+                return _handler
+
+            b.clicked.connect(_make_handler(cb))
+            btn_row.addWidget(b)
+
+        btn_row.addStretch()
+
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dlg.reject)
+        btn_row.addWidget(close_btn)
+
+        layout.addLayout(btn_row)
+
+        dlg.exec()
+
+        # Run the chosen action after the dialog has closed.
+        if pending["cb"]:
+            pending["cb"]()
+
+    @Slot()
+    def _deep_inspect(self, folder_path: str):
+        """Run ffprobe/ffmpeg deep inspection on the folder's video file.
+
+        Diagnoses whether a CORRUPT file is truly unrecoverable (source/container
+        damage) or has a fixable problem (e.g. a truncated download). Runs in a
+        background thread and shows the report in a scrollable dialog.
+        """
+        from app.workers import InspectWorker
+
+        # Resolve the actual video file: prefer the DB's stored video_path,
+        # else fall back to the largest video in the folder.
+        video_path = None
+        files = db.get_files(self._db_conn)
+        record = next((f for f in files if f["folder_path"] == folder_path), None)
+        if record:
+            video_path = record.get("video_path")
+
+        if not video_path or not Path(video_path).exists():
+            found = scanner.largest_video_in_folder(Path(folder_path))
+            video_path = str(found) if found else None
+
+        if not video_path:
+            QMessageBox.warning(
+                self,
+                "No Video File",
+                f"Could not find a video file to inspect in:\n{Path(folder_path).name}",
+            )
+            return
+
+        # Guard against launching two inspections at once.
+        if getattr(self, "_inspect_worker", None) and self._inspect_worker.isRunning():
+            QMessageBox.information(
+                self, "Inspection Running", "A deep inspection is already in progress."
+            )
+            return
+
+        folder_name = Path(folder_path).name
+        self._progress_label.setText(f"🔬 Inspecting: {folder_name} (running ffprobe...)")
+
+        # Show a determinate progress dialog. The inspection has three cheap
+        # phases (ffprobe -> header -> tail); the worker emits a fraction at
+        # each boundary so the bar advances meaningfully with no extra cost.
+        from PySide6.QtWidgets import QProgressDialog
+        from PySide6.QtCore import Qt as _Qt
+
+        busy = QProgressDialog(
+            f"Inspecting {folder_name}...\nRunning ffprobe + header/tail decode.",
+            "Cancel", 0, 100, self
+        )
+        busy.setWindowTitle("Deep Inspect")
+        busy.setWindowModality(_Qt.WindowModality.WindowModal)
+        busy.setAutoClose(False)
+        busy.setAutoReset(False)
+        busy.setMinimumDuration(0)
+        busy.setValue(0)
+        self._inspect_dialog = busy
+
+        def on_inspect_progress(frac, label):
+            if getattr(self, "_inspect_dialog", None) is None:
+                return
+            pct = int(max(0.0, min(1.0, frac)) * 100)
+            busy.setValue(pct)
+            busy.setLabelText(f"Inspecting {folder_name}...\n{label} ({pct}%)")
+
+        self._inspect_video_path = video_path  # remember for a possible full decode
+        self._inspect_folder_path = folder_path  # remember for a possible remediation
+        self._inspect_worker = InspectWorker(video_path)
+        self._inspect_worker.progress.connect(on_inspect_progress)
+        self._inspect_worker.finished.connect(
+            lambda result: self._on_inspect_finished(folder_path, folder_name, result)
+        )
+        self._inspect_worker.error.connect(self._on_inspect_error)
+        busy.canceled.connect(self._inspect_worker.cancel)
+        self._inspect_worker.start()
+
+    def _close_inspect_dialog(self):
+        """Close and dispose the inspect busy dialog if present."""
+        if getattr(self, "_inspect_dialog", None):
+            self._inspect_dialog.reset()
+            self._inspect_dialog.deleteLater()
+            self._inspect_dialog = None
+
+    @Slot(dict)
+    def _on_inspect_finished(self, folder_path: str, folder_name: str, result: dict):
+        """Show the deep-inspection report. Offer a one-click Delete + Re-search
+        when the diagnosis says a re-download will fix it; offer a full deep
+        decode when the quick check was inconclusive."""
+        self._close_inspect_dialog()
+        self._progress_label.setText(f"Inspection complete: {folder_name}")
+        report = result.get("report") or result.get("summary") or "No output."
+
+        if getattr(self, "_inspect_worker", None):
+            self._inspect_worker.deleteLater()
+            self._inspect_worker = None
+
+        # Build contextual action buttons for the report dialog.
+        actions = []
+        if result.get("fixable") is True:
+            actions.append((
+                "Delete + Re-search (Radarr)",
+                lambda: self._remediate_paths([folder_path]),
+                True,  # primary
+            ))
+        elif result.get("ambiguous"):
+            actions.append((
+                "Run Full Deep Decode",
+                lambda: self._full_decode(
+                    folder_path,
+                    folder_name,
+                    getattr(self, "_inspect_video_path", None),
+                    result.get("duration_sec"),
+                ),
+                False,
+            ))
+
+        self._show_text_dialog(f"Deep Inspect - {folder_name}", report, actions=actions)
+
+    def _full_decode(self, folder_path: str, folder_name: str, video_path: str, duration_sec):
+        """Run the full-file deep decode in the background with a progress dialog."""
+        from app.workers import FullDecodeWorker
+        from PySide6.QtWidgets import QProgressDialog
+        from PySide6.QtCore import Qt as _Qt
+
+        if not video_path:
+            QMessageBox.warning(self, "No Video File", "Could not resolve the video file to decode.")
+            return
+
+        if getattr(self, "_fulldecode_worker", None) and self._fulldecode_worker.isRunning():
+            QMessageBox.information(self, "Decode Running", "A full decode is already in progress.")
+            return
+
+        # Modal progress dialog with a Cancel button.
+        dlg = QProgressDialog(
+            f"Deep decoding {folder_name}...", "Cancel", 0, 100, self
+        )
+        dlg.setWindowTitle("Full Deep Decode")
+        dlg.setWindowModality(_Qt.WindowModality.WindowModal)
+        dlg.setAutoClose(False)
+        dlg.setAutoReset(False)
+        dlg.setMinimumDuration(0)
+        dlg.setValue(0)
+        self._fulldecode_dialog = dlg
+
+        worker = FullDecodeWorker(video_path, duration_sec=duration_sec)
+        self._fulldecode_worker = worker
+
+        def on_progress(frac, elapsed):
+            if frac is None:
+                # Unknown total — show elapsed time and pulse.
+                dlg.setRange(0, 0)
+                dlg.setLabelText(f"Deep decoding {folder_name}...\nElapsed: {int(elapsed)}s")
+            else:
+                dlg.setRange(0, 100)
+                dlg.setValue(int(frac * 100))
+                dlg.setLabelText(
+                    f"Deep decoding {folder_name}...\n"
+                    f"{int(frac * 100)}%  (elapsed {int(elapsed)}s)"
                 )
+
+        worker.progress.connect(on_progress)
+        worker.finished.connect(
+            lambda result: self._on_full_decode_finished(folder_path, folder_name, result)
+        )
+        worker.error.connect(self._on_full_decode_error)
+        dlg.canceled.connect(worker.cancel)
+
+        self._progress_label.setText(f"🔬 Full decode: {folder_name} (this may take a while)...")
+        worker.start()
+
+    @Slot(dict)
+    def _on_full_decode_finished(self, folder_path: str, folder_name: str, result: dict):
+        """Show the full-decode error map + verdict, and offer a one-click
+        Delete + Re-search when the verdict says a re-download will fix it."""
+        if getattr(self, "_fulldecode_dialog", None):
+            self._fulldecode_dialog.reset()
+            self._fulldecode_dialog.deleteLater()
+            self._fulldecode_dialog = None
+
+        verdict = result.get("verdict", "")
+        self._progress_label.setText(f"Full decode complete: {folder_name} — {verdict}")
+        report = result.get("report") or "No output."
+
+        actions = []
+        if result.get("fixable") is True:
+            actions.append((
+                "Delete + Re-search (Radarr)",
+                lambda: self._remediate_paths([folder_path]),
+                True,
+            ))
+
+        self._show_text_dialog(f"Full Deep Decode - {folder_name}", report, actions=actions)
+
+        if getattr(self, "_fulldecode_worker", None):
+            self._fulldecode_worker.deleteLater()
+            self._fulldecode_worker = None
+
+    @Slot(str)
+    def _on_full_decode_error(self, msg: str):
+        if getattr(self, "_fulldecode_dialog", None):
+            self._fulldecode_dialog.reset()
+            self._fulldecode_dialog.deleteLater()
+            self._fulldecode_dialog = None
+        self._progress_label.setText("Full decode failed")
+        QMessageBox.critical(self, "Full Decode Error", f"Full decode failed:\n{msg}")
+        if getattr(self, "_fulldecode_worker", None):
+            self._fulldecode_worker.deleteLater()
+            self._fulldecode_worker = None
+
+    @Slot(str)
+    def _on_inspect_error(self, msg: str):
+        """Handle a deep-inspection failure."""
+        self._close_inspect_dialog()
+        self._progress_label.setText("Inspection failed")
+        QMessageBox.critical(self, "Inspection Error", f"Deep inspect failed:\n{msg}")
+        if getattr(self, "_inspect_worker", None):
+            self._inspect_worker.deleteLater()
+            self._inspect_worker = None
     
     @Slot()
     def _show_context_menu(self, position):
@@ -1017,6 +1359,9 @@ class MainWindow(QMainWindow):
         
         log_action = menu.addAction("📄 Show ffmpeg Log")
         log_action.triggered.connect(self._show_log)
+        
+        inspect_action = menu.addAction("🔬 Deep Inspect (ffprobe)")
+        inspect_action.triggered.connect(lambda: self._deep_inspect(path))
         
         menu.addSeparator()
         
@@ -1132,57 +1477,72 @@ class MainWindow(QMainWindow):
     
     @Slot()
     def _remediate_queued(self):
-        """Execute remediation on queued files."""
-        from radarr import RadarrClient
-        from app.workers import RemediateWorker
-        
-        # Get queued files
+        """Execute remediation on all QUEUED files."""
         queued = db.get_files(self._db_conn, filter_remediation="QUEUED")
-        
         if not queued:
             QMessageBox.warning(self, "No Files Queued", "No files are queued for remediation")
             return
-        
-        # Confirm
+        folder_paths = [f["folder_path"] for f in queued]
+        self._remediate_paths(folder_paths)
+
+    def _remediate_paths(self, folder_paths: list):
+        """Confirm, then delete + Radarr re-search the given folder path(s).
+
+        Shared by the "Delete + Re-search" button (whole QUEUED set) and by the
+        one-click action offered from a deep-inspect diagnosis.
+        """
+        from radarr import RadarrClient
+        from app.workers import RemediateWorker
+
+        if not folder_paths:
+            return
+
+        # Don't launch a second remediation on top of a running one.
+        if getattr(self, "_remediate_worker", None) and self._remediate_worker.isRunning():
+            QMessageBox.information(
+                self, "Remediation Running", "A remediation is already in progress."
+            )
+            return
+
+        if len(folder_paths) == 1:
+            detail = f"'{Path(folder_paths[0]).name}'"
+        else:
+            detail = f"{len(folder_paths)} file(s)"
         reply = QMessageBox.question(
             self,
             "Confirm Remediation",
             f"This will:\n"
-            f"1. Delete {len(queued)} file(s) from disk\n"
-            f"2. Tell Radarr to re-search for them\n\n"
+            f"1. Delete {detail} from disk\n"
+            f"2. Tell Radarr to re-search for a fresh download\n\n"
             f"Continue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
-        
         if reply != QMessageBox.StandardButton.Yes:
             return
-        
-        # Extract folder paths
-        folder_paths = [f["folder_path"] for f in queued]
-        
-        # Create Radarr client
+
         try:
             radarr = RadarrClient()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to connect to Radarr: {e}")
             return
-        
-        # Start remediation worker (worker will create its own DB connection)
+
+        # Make sure these are marked QUEUED so the table/state stays consistent.
+        db.mark_queued(self._db_conn, folder_paths)
+        self._refresh_table()
+
         self._remediate_worker = RemediateWorker(
             folder_paths=folder_paths,
             radarr_client=radarr,
             dry_run=False,
-            max_batch=None
+            max_batch=None,
         )
-        
         self._remediate_worker.step.connect(self._on_remediate_step)
         self._remediate_worker.finished.connect(self._on_remediate_finished)
         self._remediate_worker.error.connect(self._on_error)
-        
-        # Disable buttons during remediation
+
         self._remediate_btn.setEnabled(False)
         self._scan_btn.setEnabled(False)
-        
+
         self._remediate_worker.start()
     
     @Slot(str, str, str, str)
@@ -1287,6 +1647,19 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
         
+        # Stop any running deep-inspection worker
+        if getattr(self, "_inspect_worker", None) and self._inspect_worker.isRunning():
+            self._inspect_worker.cancel()
+            self._inspect_worker.wait(2000)
+            self._kill_ffmpeg_processes()
+        self._close_inspect_dialog()
+
+        # Stop any running full-decode worker
+        if getattr(self, "_fulldecode_worker", None) and self._fulldecode_worker.isRunning():
+            self._fulldecode_worker.cancel()
+            self._fulldecode_worker.wait(2000)
+            self._kill_ffmpeg_processes()
+
         # Close database connection
         if self._db_conn:
             self._db_conn.close()

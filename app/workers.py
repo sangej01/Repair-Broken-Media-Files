@@ -109,6 +109,98 @@ class ScanWorker(QThread):
             pass
 
 
+class InspectWorker(QThread):
+    """Background worker for on-demand ffprobe/ffmpeg deep inspection.
+
+    Runs scanner.deep_inspect() off the GUI thread so the window stays
+    responsive while ffprobe and the header/tail decodes run.
+    """
+
+    progress = Signal(float, str)  # fraction (0..1), phase label
+    finished = Signal(dict)        # result dict from scanner.deep_inspect
+    error = Signal(str)
+
+    def __init__(self, video_path: str):
+        super().__init__()
+        self.video_path = video_path
+        self._cancelled = False
+
+    def run(self):
+        try:
+            from pathlib import Path
+
+            def progress_cb(frac, label):
+                if not self._cancelled:
+                    self.progress.emit(float(frac), str(label))
+
+            result = scanner.deep_inspect(Path(self.video_path), progress_callback=progress_cb)
+            if self._cancelled:
+                return
+            self.finished.emit(result)
+        except Exception as e:
+            import traceback
+            print(f"[InspectWorker] Exception:\n{traceback.format_exc()}", flush=True)
+            if not self._cancelled:
+                self.error.emit(str(e))
+
+    def cancel(self):
+        """Request cancellation and kill any running ffprobe/ffmpeg child."""
+        self._cancelled = True
+        try:
+            scanner._kill_all_active_processes()
+        except Exception:
+            pass
+
+
+class FullDecodeWorker(QThread):
+    """Background worker for a full deep-decode error map.
+
+    Decodes the entire file (expensive) and reports exactly where decode errors
+    occur, with a severity verdict. Emits progress so the GUI can show a bar,
+    and supports cancellation.
+    """
+
+    progress = Signal(object, float)  # fraction (0..1 or None), elapsed_sec
+    finished = Signal(dict)           # result dict from scanner.full_decode_error_map
+    error = Signal(str)
+
+    def __init__(self, video_path: str, duration_sec=None):
+        super().__init__()
+        self.video_path = video_path
+        self.duration_sec = duration_sec
+        self._cancelled = False
+
+    def run(self):
+        try:
+            from pathlib import Path
+
+            def progress_cb(frac, elapsed):
+                if not self._cancelled:
+                    self.progress.emit(frac, elapsed)
+
+            def cancel_cb():
+                return self._cancelled
+
+            result = scanner.full_decode_error_map(
+                Path(self.video_path),
+                duration_sec=self.duration_sec,
+                progress_callback=progress_cb,
+                cancel_flag=cancel_cb,
+            )
+            self.finished.emit(result)
+        except Exception as e:
+            import traceback
+            print(f"[FullDecodeWorker] Exception:\n{traceback.format_exc()}", flush=True)
+            self.error.emit(str(e))
+
+    def cancel(self):
+        self._cancelled = True
+        try:
+            scanner._kill_all_active_processes()
+        except Exception:
+            pass
+
+
 class RemediateWorker(QThread):
     """Background worker for remediation (delete + Radarr search)."""
     

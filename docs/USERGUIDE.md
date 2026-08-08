@@ -222,8 +222,27 @@ UNKNOWN movies will be processed on the next scan. To convert UNKNOWN movies to 
 
 #### Filtering:
 - **Status dropdown:** Show only CORRUPT, CLEAN, ERROR, TIMEOUT, MISSING, EMPTY, UNKNOWN, or All
+  - **Problematic** (a shortcut entry near the top, above a dotted separator):
+    shows **TIMEOUT + UNKNOWN + ERROR** together — every file worth re-scanning.
+    See [Which Statuses to Re-scan](#which-statuses-to-re-scan) below.
 - **Remediation dropdown:** Filter by NONE, QUEUED, DELETED, REMEDIATED, SKIPPED
 - **Search box:** Type to filter by folder name
+
+#### Which Statuses to Re-scan
+
+Re-scanning only changes the outcome for statuses that were never a real verdict:
+
+| Status | Re-scan? | Why |
+|--------|----------|-----|
+| **TIMEOUT** | **Yes — with a longer timeout** | Environmental (slow NAS / short budget), not a verdict |
+| **UNKNOWN** | **Yes** | Scan was interrupted; never actually decided |
+| **ERROR** | **Yes, after fixing the cause** | Infrastructure failure (ffmpeg/PATH/permissions), not a verdict |
+| CORRUPT | No — use **Deep Inspect** instead | Deterministic on the same bytes; re-decoding gives the same answer |
+| CLEAN | No | Definitive pass |
+| EMPTY | Only if you added a video file | No video was present |
+| MISSING | Use "Verify Folder Exists" | Folder-existence check, not a decode |
+
+The **Problematic** filter selects exactly the first three rows in one click.
 
 #### Why Attempts Matter:
 If a movie shows **2+ attempts**, it means the remediation cycle is failing repeatedly:
@@ -236,9 +255,63 @@ If a movie shows **2+ attempts**, it means the remediation cycle is failing repe
 2. Click **"Show ffmpeg Log"** to see corruption details
 3. Example log:
    ```
-   File ended prematurely at position 1234567890
-   [matroska,webm @ 0x...] File ended prematurely
+   [Incomplete / truncated] File ended prematurely at position 1234567890
+
+   ── Diagnosis ──
+   Type: Incomplete / truncated
+   The file is cut short - bytes are missing from the end...
+
+   A fresh re-download will LIKELY fix this.
    ```
+
+   The bracketed prefix (`[Incomplete / truncated]`) is the **triage label** — a
+   plain-English classification of the corruption. Hovering the **Reason** cell in
+   the table shows the same label plus a full explanation and whether a re-download
+   is likely to help.
+
+### 2b. Diagnosing Corrupt Files (Is it truly unrecoverable?)
+
+A CORRUPT flag alone doesn't tell you *why* the file is broken or whether a
+re-download will help. Two on-demand diagnostics answer that. Right-click a row to
+run them.
+
+#### Deep Inspect (ffprobe) — fast
+
+Right-click → **🔬 Deep Inspect (ffprobe)**. A progress dialog shows three phases
+(ffprobe metadata → header decode → tail decode). It then reports one of:
+
+| Diagnosis | What it means | What the dialog offers |
+|-----------|---------------|------------------------|
+| **Truncated / incomplete** (header fine, END damaged) | A classic bad/interrupted download | **Delete + Re-search (Radarr)** button |
+| **Container-level damage** (header fails) | The file structure is broken — bad source release or disk write | *(no re-download offer — the same release will likely fail again; find a different one)* |
+| **Ambiguous** (header + end both decode clean) | Damage is in the un-probed MIDDLE | **Run Full Deep Decode** button |
+
+Deep Inspect is cheap — it only decodes the first moment and the last ~5%.
+
+#### Full Deep Decode — thorough (opt-in)
+
+Offered only when Deep Inspect is inconclusive (and only after you click **Yes**),
+because it decodes the **entire file** — the same cost as the original scan, so it
+can take several minutes on a large movie. It runs in the background with a
+percentage progress bar and a **Cancel** button.
+
+It produces a **timeline error map** (20 segments showing where errors cluster) and
+a verdict:
+
+| Verdict | Meaning | Recommended action |
+|---------|---------|--------------------|
+| **CLEAN** | Full decode found 0 errors | The earlier flag was transient — re-scan to clear it |
+| **PLAYABLE** | A few errors, localized | Expect a brief glitch; file is watchable |
+| **RE-DOWNLOAD** | Errors concentrated in one region | Corrupted download chunk — a fresh copy of the SAME release will likely fix it (**Delete + Re-search** button offered) |
+| **BAD SOURCE** | Errors spread across most of the runtime | Pervasive/structural — the release itself is bad; seek a DIFFERENT release |
+
+#### One-Click Delete + Re-search
+
+When either diagnosis concludes a re-download will fix it (**Truncated** or
+**RE-DOWNLOAD**), the report dialog shows a highlighted **"Delete + Re-search
+(Radarr)"** button. Clicking it runs the normal remediation flow for that one folder
+(with the usual delete confirmation) — delete from disk → Radarr unmonitor → delete
+file record → monitor → search. Nothing is deleted without confirming.
 
 ### 3. Queuing for Remediation
 
@@ -290,7 +363,8 @@ Right-click on any movie row to access (menu items vary by current state):
 
 **Always available:**
 - **📁 Open Folder** - Opens folder in Windows Explorer
-- **📄 Show ffmpeg Log** - View corruption details / scan output
+- **📄 Show ffmpeg Log** - View corruption details / scan output (with triage diagnosis)
+- **🔬 Deep Inspect (ffprobe)** - Fast diagnosis: is this truly unrecoverable, or a fixable download? (see [Diagnosing Corrupt Files](#2b-diagnosing-corrupt-files-is-it-truly-unrecoverable))
 - **🚫 Mark as Skipped** - Don't remediate this one
 - **🔍 Verify Folder Exists** - Check if folder is still on disk
 - **📋 Copy Path** - Copy folder path to clipboard
@@ -712,7 +786,16 @@ that previously timed out at 30 minutes now have the room to complete.
 - Truncated packets
 - Corrupt EBML headers
 
-Full list in `scanner.py:TROUBLE_KEYWORDS`
+Full list in `scanner.py:TROUBLE_KEYWORDS`. Each detected pattern is also mapped to
+a human-readable **triage label** and a re-download recommendation
+(`scanner.py:TRIAGE_RULES`).
+
+### Q: How do I tell if a CORRUPT file is truly unrecoverable?
+
+**A:** Right-click it → **🔬 Deep Inspect (ffprobe)**. If that's inconclusive it will
+offer a **Full Deep Decode** that maps every error and returns a verdict
+(CLEAN / PLAYABLE / RE-DOWNLOAD / BAD SOURCE). See
+[Diagnosing Corrupt Files](#2b-diagnosing-corrupt-files-is-it-truly-unrecoverable).
 
 ### Q: Does it delete files automatically?
 
@@ -768,6 +851,14 @@ Database: `repair.db` (can be queried with any SQLite client)
 ---
 
 ## Version History
+
+**v1.1** (2026-08-08)
+- Corruption diagnostics: Deep Inspect (ffprobe + header/tail decode) and Full Deep
+  Decode (whole-file error map with severity verdict)
+- Triage labels on every CORRUPT reason, with re-download recommendations
+- One-click "Delete + Re-search" offered from a fixable diagnosis
+- "Problematic" status filter (TIMEOUT + UNKNOWN + ERROR)
+- Progress bars + Cancel on the inspect/decode dialogs
 
 **v1.0** (2026-06-17)
 - Initial release

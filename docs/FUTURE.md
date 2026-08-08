@@ -6,6 +6,31 @@ Roadmap and ideas for future versions. Not committed to specific timelines.
 
 ## Recently Completed
 
+### ✅ Corruption Diagnostics + Triage (v1.1)
+
+CORRUPT files can now be diagnosed on demand to decide whether they're truly
+unrecoverable or just need a re-download:
+
+- **Triage classification** (`scanner.py:TRIAGE_RULES` + `triage_corruption()`):
+  every ffmpeg error signature maps to a plain-English label (e.g.
+  `Incomplete / truncated`, `Missing / broken headers`) and a `fixable` hint. The
+  label is stored inline in `stderr_tail` and surfaced in the Reason column tooltip
+  and the ffmpeg-log dialog.
+- **Deep Inspect** (`scanner.deep_inspect()`): ffprobe metadata + header-only decode
+  + tail decode, distinguishing truncated/incomplete (fixable) from container-level
+  damage (bad source) from ambiguous (needs full decode). Determinate progress bar.
+- **Full Deep Decode** (`scanner.full_decode_error_map()`): opt-in whole-file decode
+  that maps error locations onto a 20-segment timeline and returns a severity
+  verdict — CLEAN / PLAYABLE / RE-DOWNLOAD / BAD SOURCE. Background worker with a
+  progress bar and Cancel.
+- **One-click remediation**: when a diagnosis is fixable-by-re-download, the report
+  dialog offers a **Delete + Re-search (Radarr)** button (reuses the normal
+  remediation flow, single folder).
+- **"Problematic" status filter**: aggregates TIMEOUT + UNKNOWN + ERROR — the
+  statuses actually worth re-scanning.
+
+This supersedes the old "Better ffmpeg Output Parsing" idea below.
+
 ### ✅ PostgreSQL Backend + Distributed Scan Coordination (Phase 1-3 done)
 
 The dual-backend infrastructure plus atomic claim semantics is in place.
@@ -231,10 +256,15 @@ When remediation finds repeated corruption from same release:
 - `repair stats` - statistics dashboard in terminal
 - `repair export` - dump database to CSV/JSON for analysis
 
-### Better ffmpeg Output Parsing
-- Categorize corruption types (truncation vs DTS issues vs codec errors)
-- Severity ratings
-- Suggest specific remediation strategies based on error type
+### ✅ Better ffmpeg Output Parsing — DONE (v1.1)
+- ~~Categorize corruption types (truncation vs DTS issues vs codec errors)~~
+- ~~Severity ratings~~
+- ~~Suggest specific remediation strategies based on error type~~
+- Implemented via triage labels, Deep Inspect, and Full Deep Decode — see
+  **Recently Completed** at the top.
+
+  Possible follow-ups: persist the diagnosis/verdict in the database (currently
+  computed on demand); a CLI `diagnose` subcommand; batch-diagnose all CORRUPT.
 
 ### Integration with Movie Library Compressor's PostgreSQL Tracker
 - Read existing tracker to skip "we already know this is fine" folders

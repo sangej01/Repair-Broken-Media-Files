@@ -81,6 +81,111 @@ VIDEO_EXTS = {".mkv", ".mp4", ".avi", ".m4v", ".wmv", ".ts", ".m2ts", ".mpg", ".
 IGNORE_DIR_NAMES = {"Extras", "Sample", "Featurettes", "Behind The Scenes", "Trailers"}
 
 
+# Corruption triage: map ffmpeg error signatures to a human-readable diagnosis
+# and a hint about whether a fresh re-download is likely to help. Ordered most
+# specific first — the first matching signature wins.
+#
+# Each entry: (keyword, short_label, likely_fixable_by_redownload, explanation)
+TRIAGE_RULES = (
+    ("file ended prematurely",
+     "Incomplete / truncated",
+     True,
+     "The file is cut short — bytes are missing from the end. Almost always an "
+     "incomplete download or interrupted copy. A fresh re-download usually fixes it."),
+    ("ended prematurely",
+     "Incomplete / truncated",
+     True,
+     "The stream ends before it should. Typically an incomplete download or "
+     "interrupted copy. A fresh re-download usually fixes it."),
+    ("truncated",
+     "Incomplete / truncated",
+     True,
+     "The file was cut off before the full stream was written. Re-downloading "
+     "usually fixes it."),
+    ("could not find codec parameters",
+     "Missing / broken headers",
+     False,
+     "ffmpeg cannot read the stream headers. The container is malformed — often "
+     "a bad encode at the source, not just a transfer error. A re-download may "
+     "help only if a different (good) release exists."),
+    ("invalid as first byte of an ebml",
+     "Broken container (MKV)",
+     False,
+     "The Matroska/EBML container header is corrupt at the very start. The file "
+     "structure itself is damaged — likely bad at the source or a disk write error."),
+    ("invalid nal unit size",
+     "Encoder artifact (H.264/H.265)",
+     False,
+     "The video bitstream has malformed NAL units. This is usually a bad encode "
+     "at the source rather than a transfer problem."),
+    ("decode_slice",
+     "Encoder artifact (slice decode)",
+     False,
+     "A coded slice failed to decode. Usually indicates bitstream damage baked "
+     "into the file at encode time."),
+    ("missing reference",
+     "Missing reference frames",
+     True,
+     "Frames reference other frames that are missing (broken GOP). Often the "
+     "result of an incomplete download — a fresh copy usually fixes it."),
+    ("non monotonically",
+     "Timestamp (DTS/PTS) problem",
+     False,
+     "Decode timestamps are out of order. The file may still play in tolerant "
+     "players, but the muxing is broken. Re-encoding rarely helps; a clean "
+     "release is the reliable fix."),
+    ("non-monotonous",
+     "Timestamp (DTS/PTS) problem",
+     False,
+     "Decode timestamps are out of order. The file may still play in tolerant "
+     "players, but the muxing is broken. A clean release is the reliable fix."),
+    ("concealing",
+     "Partial corruption (concealed)",
+     True,
+     "Some frames are damaged and ffmpeg is concealing the errors. Part of the "
+     "file is fine; a fresh download typically restores the damaged region."),
+    ("packet too large",
+     "Malformed packet",
+     False,
+     "A packet declares an impossible size — structural corruption in the "
+     "container. Usually damaged at the source or by a bad disk write."),
+    ("invalid nal",
+     "Encoder artifact (H.264/H.265)",
+     False,
+     "The video bitstream is malformed. Usually a bad encode at the source."),
+    ("no frame",
+     "No decodable frames",
+     True,
+     "ffmpeg found no decodable frames. The payload is missing or unreadable — "
+     "a fresh download is usually required."),
+    ("corrupt",
+     "Generic corruption",
+     True,
+     "ffmpeg reported generic corruption. A fresh re-download is the usual fix; "
+     "if it recurs, the source release itself may be bad."),
+)
+
+
+def triage_corruption(stderr: str):
+    """Classify a CORRUPT stderr blob into a diagnosis.
+
+    Returns a dict:
+      {
+        "label": short human label (e.g. "Incomplete / truncated"),
+        "fixable": bool | None   # True likely fixed by re-download, False unlikely, None unknown
+        "explanation": longer sentence,
+      }
+    Returns None when no known signature matches.
+    """
+    if not stderr:
+        return None
+    low = stderr.lower()
+    for kw, label, fixable, explanation in TRIAGE_RULES:
+        if kw in low:
+            return {"label": label, "fixable": fixable, "explanation": explanation}
+    return None
+
+
 def _kill_ffmpeg_processes():
     """Aggressively kill all ffmpeg processes using multiple methods."""
     # Method 1: taskkill (most reliable on Windows)
@@ -253,11 +358,581 @@ def null_decode(video_path: Path, timeout_sec: int = 1800, progress_callback=Non
     
     if proc.returncode != 0:
         # ffmpeg exited non-zero -- almost always corruption it couldn't push past
-        return "CORRUPT", stderr_tail or f"ffmpeg exit {proc.returncode}", elapsed
+        reason = stderr_tail or f"ffmpeg exit {proc.returncode}"
+        return "CORRUPT", _tag_triage(stderr_output, reason), elapsed
     
     # Exit 0 but stderr might contain trouble keywords (the 28YL pattern)
     verdict = _classify_stderr(stderr_output or "")
+    if verdict == "CORRUPT":
+        return verdict, _tag_triage(stderr_output, stderr_tail), elapsed
     return verdict, stderr_tail, elapsed
+
+
+def _tag_triage(stderr_full: str, reason: str) -> str:
+    """Prefix a corruption reason with a short triage label when recognized.
+
+    Produces e.g. "[Incomplete / truncated] file ended prematurely ...".
+    The GUI reads this from stderr_tail; the bracketed label makes the type
+    obvious at a glance in the Reason column.
+    """
+    triage = triage_corruption(stderr_full or reason or "")
+    if not triage:
+        return reason
+    return f"[{triage['label']}] {reason}".strip()
+
+
+def _run_capture(cmd: list, timeout: int = 120):
+    """Run a command, return (returncode, stdout, stderr). Never raises."""
+    try:
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        return proc.returncode, proc.stdout or "", proc.stderr or ""
+    except FileNotFoundError:
+        return -1, "", f"{cmd[0]} not found on PATH"
+    except subprocess.TimeoutExpired:
+        return -2, "", f"{cmd[0]} timed out after {timeout}s"
+    except Exception as exc:
+        return -3, "", f"exec failure: {exc}"
+
+
+def deep_inspect(video_path: Path, progress_callback: Optional[Callable] = None) -> dict:
+    """Run a battery of ffprobe/ffmpeg diagnostics on a single file.
+
+    This is an on-demand, read-only diagnostic used to decide whether a file
+    flagged CORRUPT is truly unrecoverable or just has a fixable problem
+    (e.g. an incomplete download). It runs three checks:
+
+      1. ffprobe   — full container/stream metadata (codec, duration, streams)
+      2. header    — decode the first moment only, to test container validity
+      3. tail      — decode the last ~5% only, to detect truncation
+
+    Interpretation logic:
+      - header OK + full decode fails only near the end  -> truncated / incomplete
+      - header fails                                      -> container-level damage
+      - fails uniformly throughout                        -> encoder/source corruption
+
+    Args:
+      progress_callback: optional fn(fraction_0_to_1, label) called at each
+        phase boundary so a UI can show a determinate progress bar. The three
+        phases are cheap boundaries — this adds no measurable overhead.
+
+    Returns a dict with keys:
+      ok (bool)          - True if ffprobe itself succeeded
+      probe (dict|None)  - parsed ffprobe JSON (format + streams) if available
+      summary (str)      - human-readable multi-line report
+      diagnosis (str)    - one-line conclusion
+      report (str)       - full text suitable for a dialog
+    """
+    import json as _json
+
+    def _progress(frac, label):
+        if progress_callback:
+            try:
+                progress_callback(frac, label)
+            except Exception:
+                pass
+
+    video_path = Path(video_path)
+    lines: list = []
+    diagnosis = "Inconclusive"
+
+    if not video_path.exists():
+        return {
+            "ok": False,
+            "probe": None,
+            "summary": "File no longer exists on disk.",
+            "diagnosis": "File missing",
+            "report": f"{video_path}\n\nFile no longer exists on disk.",
+        }
+
+    _progress(0.05, "Reading metadata (ffprobe)...")
+
+    lines.append(f"File: {video_path.name}")
+    try:
+        size_gb = video_path.stat().st_size / (1024 ** 3)
+        lines.append(f"Size: {size_gb:.2f} GB")
+    except OSError:
+        pass
+    lines.append("")
+
+    # ---- 1. ffprobe: container + stream metadata ---------------------------
+    rc, out, err = _run_capture(
+        [
+            "ffprobe", "-v", "error",
+            "-print_format", "json",
+            "-show_format", "-show_streams",
+            str(video_path),
+        ],
+        timeout=120,
+    )
+
+    probe = None
+    duration_sec = None
+    if rc == 0 and out.strip():
+        try:
+            probe = _json.loads(out)
+        except ValueError:
+            probe = None
+
+    if probe:
+        fmt = probe.get("format", {})
+        streams = probe.get("streams", [])
+        fmt_name = fmt.get("format_long_name") or fmt.get("format_name") or "?"
+        try:
+            duration_sec = float(fmt.get("duration")) if fmt.get("duration") else None
+        except (TypeError, ValueError):
+            duration_sec = None
+
+        lines.append("=== ffprobe: container ===")
+        lines.append(f"Container: {fmt_name}")
+        if duration_sec:
+            m, s = divmod(int(duration_sec), 60)
+            h, m = divmod(m, 60)
+            lines.append(f"Duration : {h:d}h {m:02d}m {s:02d}s")
+        else:
+            lines.append("Duration : UNKNOWN (bad sign — headers may be damaged)")
+        bitrate = fmt.get("bit_rate")
+        if bitrate:
+            try:
+                lines.append(f"Bitrate  : {int(bitrate) / 1_000_000:.1f} Mbps")
+            except (TypeError, ValueError):
+                pass
+
+        lines.append("")
+        lines.append(f"=== ffprobe: {len(streams)} stream(s) ===")
+        video_streams = 0
+        for st in streams:
+            codec_type = st.get("codec_type", "?")
+            codec = st.get("codec_name", "?")
+            if codec_type == "video":
+                video_streams += 1
+                prof = st.get("profile", "")
+                w = st.get("width", "?")
+                h = st.get("height", "?")
+                pix = st.get("pix_fmt", "?")
+                lines.append(
+                    f"  video: {codec} {prof} {w}x{h} {pix}".rstrip()
+                )
+            elif codec_type == "audio":
+                ch = st.get("channels", "?")
+                lang = st.get("tags", {}).get("language", "")
+                lines.append(f"  audio: {codec} {ch}ch {lang}".rstrip())
+            else:
+                lines.append(f"  {codec_type}: {codec}")
+        if video_streams == 0:
+            lines.append("  WARNING: no decodable video stream found.")
+    else:
+        lines.append("=== ffprobe FAILED ===")
+        lines.append((err or "ffprobe produced no output").strip()[:500])
+        if rc == -1:
+            # ffprobe missing entirely — bail early, nothing else will run
+            return {
+                "ok": False,
+                "probe": None,
+                "summary": "\n".join(lines),
+                "diagnosis": "ffprobe not installed",
+                "report": "\n".join(lines),
+            }
+
+    lines.append("")
+
+    # ---- 2. header-only decode: is the container itself readable? ----------
+    # `-t 0` reads/initializes streams without decoding frames.
+    _progress(0.40, "Checking container headers...")
+    lines.append("=== Header integrity (container) ===")
+    h_rc, _h_out, h_err = _run_capture(
+        ["ffmpeg", "-v", "error", "-i", str(video_path), "-t", "0", "-f", "null", "-"],
+        timeout=60,
+    )
+    header_ok = (h_rc == 0 and not h_err.strip())
+    if header_ok:
+        lines.append("  OK — container headers parse cleanly.")
+    else:
+        lines.append("  FAILED — headers/container are damaged:")
+        lines.append("  " + (h_err.strip()[:300] or f"ffmpeg exit {h_rc}"))
+
+    lines.append("")
+
+    # ---- 3. tail decode: is only the END broken (i.e. truncated)? ----------
+    tail_ok = None
+    tail_err = ""
+    if duration_sec and duration_sec > 30:
+        # Seek to ~5% before the end and decode to the end.
+        _progress(0.70, "Decoding tail (last ~5%)...")
+        seek_to = max(0.0, duration_sec * 0.95)
+        lines.append("=== Tail decode (last ~5%) ===")
+        t_rc, _t_out, tail_err = _run_capture(
+            [
+                "ffmpeg", "-v", "error",
+                "-ss", f"{seek_to:.2f}",
+                "-i", str(video_path),
+                "-f", "null", "-",
+            ],
+            timeout=180,
+        )
+        tail_ok = (t_rc == 0 and not tail_err.strip())
+        if tail_ok:
+            lines.append("  OK — the end of the file decodes cleanly.")
+        else:
+            lines.append("  FAILED — the end of the file is damaged:")
+            lines.append("  " + (tail_err.strip()[:300] or f"ffmpeg exit {t_rc}"))
+        lines.append("")
+
+    # ---- Diagnosis synthesis ----------------------------------------------
+    triage = triage_corruption(h_err or tail_err or "")
+
+    # `ambiguous` means the quick checks couldn't localize the damage: the
+    # header and the end both look fine, so whatever the full scan tripped on
+    # lives in the un-probed middle. Only a full decode can characterize it.
+    ambiguous = False
+    # `fixable` summarizes whether re-downloading is expected to help:
+    #   True  -> re-download the SAME release will very likely fix it
+    #   False -> the source itself is bad; a re-download of the same release
+    #            probably won't help (need a different release)
+    #   None  -> unknown from the quick check (run a full decode)
+    fixable = None
+
+    if not header_ok:
+        fixable = False
+        diagnosis = (
+            "Container-level damage — the file structure itself is broken. "
+            "Likely a bad source release or a disk-write error, not just a "
+            "partial download. Re-downloading a DIFFERENT release is the fix."
+        )
+    elif tail_ok is False and header_ok:
+        fixable = True
+        diagnosis = (
+            "Header is fine but the END is damaged — classic TRUNCATED / "
+            "INCOMPLETE download. Re-downloading the same release should fix it."
+        )
+    elif tail_ok is True and header_ok:
+        ambiguous = True
+        diagnosis = (
+            "Headers and the file's end both decode cleanly, so any damage is "
+            "in the un-probed MIDDLE of the file. This quick check can't tell "
+            "how much or where. Run a full deep decode to map the exact error "
+            "locations and get a definitive verdict."
+        )
+    elif header_ok and tail_ok is None:
+        ambiguous = True
+        diagnosis = (
+            "Headers parse cleanly but the file is too short to sample a tail. "
+            "If a full scan flagged it, the damage is mid-stream. Run a full "
+            "deep decode to map where the errors are."
+        )
+
+    if triage:
+        fixhint = (
+            "likely fixable by re-download"
+            if triage["fixable"]
+            else "re-download may NOT help (source likely bad)"
+        )
+        lines.append("=== Corruption triage ===")
+        lines.append(f"  Type : {triage['label']} ({fixhint})")
+        lines.append(f"  Note : {triage['explanation']}")
+        lines.append("")
+
+    lines.append("=== Diagnosis ===")
+    lines.append(diagnosis)
+
+    if ambiguous:
+        lines.append("")
+        lines.append(
+            "→ Recommendation: run a FULL DEEP DECODE to pinpoint the damage."
+        )
+
+    _progress(1.0, "Done")
+    report = "\n".join(lines)
+    return {
+        "ok": probe is not None,
+        "probe": probe,
+        "ambiguous": ambiguous,
+        "fixable": fixable,
+        "duration_sec": duration_sec,
+        "summary": report,
+        "diagnosis": diagnosis,
+        "report": report,
+    }
+
+
+def full_decode_error_map(video_path: Path, duration_sec: Optional[float] = None,
+                          progress_callback: Optional[Callable] = None,
+                          cancel_flag: Optional[Callable] = None) -> dict:
+    """Fully decode a file and map exactly where decode errors occur.
+
+    This is the expensive, definitive check — it decodes every frame (same cost
+    as the original null-decode scan) but keeps ffmpeg's per-error output and
+    turns it into an actionable report:
+
+      * total error count
+      * where the errors fall on the timeline (bucketed into 20 segments)
+      * whether damage is localized (one bad region → likely a bad download
+        chunk) or pervasive (spread throughout → likely a bad source release)
+      * a severity VERDICT with a recommended action
+
+    Args:
+      video_path: file to decode
+      duration_sec: known duration (from ffprobe) used to place errors on the
+        timeline and to compute a progress percentage. Optional.
+      progress_callback: fn(fraction_0_to_1 or None, elapsed_sec) called ~2x/sec
+      cancel_flag: fn() -> bool; return True to abort the decode early
+
+    Returns a dict:
+      completed (bool)   - False if cancelled/aborted before finishing
+      error_count (int)
+      verdict (str)      - one of PLAYABLE / RE-DOWNLOAD / BAD SOURCE / CLEAN
+      recommendation (str)
+      report (str)       - full multi-line text for a dialog
+    """
+    video_path = Path(video_path)
+    start = time.time()
+
+    if not video_path.exists():
+        return {
+            "completed": False,
+            "error_count": 0,
+            "verdict": "MISSING",
+            "recommendation": "File no longer exists on disk.",
+            "report": f"{video_path}\n\nFile no longer exists on disk.",
+        }
+
+    # We need two things at once, from two separate ffmpeg streams:
+    #   * stdout: machine-readable "-progress pipe:1" emits `out_time_us=<n>`
+    #     very frequently (per packet) — our reliable decode-position clock.
+    #   * stderr: at "-v error", one line per corrupt frame/packet — the errors.
+    # A background thread consumes stdout progress and updates a shared
+    # `last_time_sec[0]`; the main loop reads stderr and stamps each error with
+    # whatever the current decode position is. This localizes damage far more
+    # accurately than parsing the sparse "-stats" line.
+    proc = None
+    error_points: List[Tuple[float, str]] = []
+    last_time_sec = [0.0]          # boxed so the reader thread can mutate it
+    reader_thread = None
+
+    def _consume_progress(stdout_stream):
+        try:
+            for pline in stdout_stream:
+                pline = pline.strip()
+                if pline.startswith("out_time_us="):
+                    try:
+                        us = int(pline.split("=", 1)[1])
+                        if us >= 0:
+                            last_time_sec[0] = us / 1_000_000.0
+                    except (ValueError, IndexError):
+                        pass
+                elif pline.startswith("out_time_ms="):
+                    # older ffmpeg builds emit out_time_ms (actually microseconds)
+                    try:
+                        val = int(pline.split("=", 1)[1])
+                        if val >= 0:
+                            last_time_sec[0] = val / 1_000_000.0
+                    except (ValueError, IndexError):
+                        pass
+        except Exception:
+            pass
+
+    try:
+        proc = subprocess.Popen(
+            ["ffmpeg", "-nostdin", "-v", "error",
+             "-progress", "pipe:1", "-i", str(video_path), "-f", "null", "-"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        _register_process(proc)
+
+        reader_thread = threading.Thread(
+            target=_consume_progress, args=(proc.stdout,), daemon=True
+        )
+        reader_thread.start()
+
+        last_cb = 0.0
+        for raw_line in proc.stderr:
+            if cancel_flag and cancel_flag():
+                try:
+                    proc.kill()
+                    proc.wait(timeout=5)
+                except Exception:
+                    pass
+                return {
+                    "completed": False,
+                    "error_count": len(error_points),
+                    "verdict": "ABORTED",
+                    "recommendation": "Full decode was cancelled before completion.",
+                    "report": "Full decode cancelled.",
+                }
+
+            line = raw_line.rstrip("\n")
+            if not line:
+                continue
+
+            # Every stderr line at -v error is a real decode/demux error.
+            error_points.append((last_time_sec[0], line))
+
+            # Emit a throttled progress update off the current decode position.
+            now = time.time()
+            if progress_callback and (now - last_cb) >= 0.5:
+                frac = (last_time_sec[0] / duration_sec) if duration_sec else None
+                if frac is not None:
+                    frac = max(0.0, min(1.0, frac))
+                progress_callback(frac, now - start)
+                last_cb = now
+
+        proc.wait()
+        # Drain the progress thread and fire a final 100% progress tick.
+        if reader_thread:
+            reader_thread.join(timeout=2)
+        if progress_callback:
+            progress_callback(1.0 if duration_sec else None, time.time() - start)
+    except FileNotFoundError:
+        return {
+            "completed": False,
+            "error_count": 0,
+            "verdict": "ERROR",
+            "recommendation": "ffmpeg not found on PATH.",
+            "report": "ffmpeg not found on PATH.",
+        }
+    except Exception as exc:
+        if proc and proc.poll() is None:
+            try:
+                proc.kill()
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+        return {
+            "completed": False,
+            "error_count": len(error_points),
+            "verdict": "ERROR",
+            "recommendation": f"Decode failed: {exc}",
+            "report": f"Decode failed: {exc}",
+        }
+    finally:
+        if proc:
+            _unregister_process(proc)
+
+    elapsed = time.time() - start
+    error_count = len(error_points)
+
+    # ---- Build the timeline histogram (20 buckets) -------------------------
+    N_BUCKETS = 20
+    buckets = [0] * N_BUCKETS
+    total_dur = duration_sec or (max((t for t, _ in error_points), default=0.0) or 1.0)
+    for t, _msg in error_points:
+        if total_dur > 0:
+            idx = int((t / total_dur) * N_BUCKETS)
+            idx = max(0, min(N_BUCKETS - 1, idx))
+        else:
+            idx = 0
+        buckets[idx] += 1
+    affected_buckets = sum(1 for b in buckets if b > 0)
+    spread_pct = (affected_buckets / N_BUCKETS) * 100.0
+
+    # ---- Severity verdict --------------------------------------------------
+    # Heuristics tuned for "is this watchable / is the source bad?":
+    #   - 0 errors             → CLEAN (the earlier scan may have been transient)
+    #   - few errors, localized → PLAYABLE (a brief glitch)
+    #   - many errors OR spread across most of the file → decide RE-DOWNLOAD vs BAD SOURCE
+    if error_count == 0:
+        verdict = "CLEAN"
+        recommendation = (
+            "A full decode found NO errors. The earlier CORRUPT flag was likely "
+            "transient (a slow NAS read or a since-fixed file). Re-scan to clear it."
+        )
+    elif error_count <= 5 and affected_buckets <= 2:
+        verdict = "PLAYABLE"
+        recommendation = (
+            f"Only {error_count} error(s) in a small region — expect a brief "
+            "glitch of a second or two. The file is almost certainly watchable. "
+            "Re-download is optional."
+        )
+    elif spread_pct >= 60.0:
+        verdict = "BAD SOURCE"
+        recommendation = (
+            f"Errors are spread across ~{spread_pct:.0f}% of the runtime "
+            f"({error_count} total). This is pervasive corruption, typical of a "
+            "bad encode/release rather than a transfer glitch. Re-downloading the "
+            "SAME release will probably fail again — seek a different release."
+        )
+    else:
+        verdict = "RE-DOWNLOAD"
+        recommendation = (
+            f"{error_count} errors concentrated in ~{affected_buckets}/{N_BUCKETS} "
+            "of the timeline. Localized damage like this is usually a corrupted "
+            "download chunk — re-downloading the same release will likely fix it."
+        )
+
+    # ---- Render report -----------------------------------------------------
+    lines: List[str] = []
+    lines.append(f"File: {video_path.name}")
+    if duration_sec:
+        m_, s_ = divmod(int(duration_sec), 60)
+        h_, m_ = divmod(m_, 60)
+        lines.append(f"Duration: {h_:d}h {m_:02d}m {s_:02d}s")
+    lines.append(f"Decode time: {elapsed:.0f}s")
+    lines.append("")
+    lines.append(f"Total decode errors: {error_count}")
+    lines.append(f"Timeline coverage : {affected_buckets}/{N_BUCKETS} segments affected "
+                 f"({spread_pct:.0f}% of runtime)")
+    lines.append("")
+
+    if error_count > 0:
+        lines.append("=== Error map (each segment ~5% of runtime) ===")
+        seg_dur = total_dur / N_BUCKETS if total_dur else 0
+        for i, count in enumerate(buckets):
+            seg_start = seg_dur * i
+            mm, ss = divmod(int(seg_start), 60)
+            hh, mm = divmod(mm, 60)
+            label = f"{hh:d}:{mm:02d}:{ss:02d}"
+            bar = "#" * min(count, 40) if count else "."
+            suffix = f" {count}" if count else ""
+            lines.append(f"  {label}  {bar}{suffix}")
+        lines.append("")
+
+        # Show a few representative raw error messages.
+        lines.append("=== Sample errors ===")
+        seen = set()
+        shown = 0
+        for _t, msg in error_points:
+            key = msg[:80]
+            if key in seen:
+                continue
+            seen.add(key)
+            lines.append(f"  {msg[:160]}")
+            shown += 1
+            if shown >= 8:
+                break
+        lines.append("")
+
+    lines.append("=== VERDICT ===")
+    lines.append(verdict)
+    lines.append(recommendation)
+
+    # Whether re-downloading the SAME release is expected to help. RE-DOWNLOAD
+    # (localized damage) is the clear yes; the others are no / not-applicable.
+    fixable = verdict == "RE-DOWNLOAD"
+
+    report = "\n".join(lines)
+    return {
+        "completed": True,
+        "error_count": error_count,
+        "verdict": verdict,
+        "recommendation": recommendation,
+        "spread_pct": spread_pct,
+        "buckets": buckets,
+        "fixable": fixable,
+        "report": report,
+    }
 
 
 def _enumerate_movie_folders(roots: list) -> list:
