@@ -253,6 +253,16 @@ class MainWindow(QMainWindow):
         
         layout.addLayout(progress_row)
         
+        # --- Per-worker activity panel ---
+        # One line per concurrently-scanning file (movie name + live timer), so
+        # with N parallel workers you see all N files in flight, not just one.
+        self._worker_panel = QVBoxLayout()
+        self._worker_panel.setSpacing(2)
+        self._worker_panel.setContentsMargins(0, 0, 0, 0)
+        layout.addLayout(self._worker_panel)
+        # folder_path -> QLabel for its progress line
+        self._worker_rows: dict = {}
+        
         # --- Filter row ---
         filter_row = QHBoxLayout()
         filter_row.setSpacing(8)
@@ -308,15 +318,13 @@ class MainWindow(QMainWindow):
         self._search_box.textChanged.connect(self._apply_filter)
         filter_row.addWidget(self._search_box, 1)
         
-        # Toggle to hide/show folders that were skipped this scan (already
-        # scanned recently, so not re-decoded this run). Lets you focus on the
-        # rows that are actually being worked. Takes effect immediately.
+        # Toggle to hide/show files you've marked SKIPPED (Remediation = SKIPPED).
+        # Applies immediately, in any view, scanning or not.
         self._show_skipped = True
         self._skip_toggle_btn = QPushButton("Hide Skipped")
-        self._skip_toggle_btn.setCheckable(True)
         self._skip_toggle_btn.setToolTip(
-            "Hide folders that were skipped this scan (already scanned recently). "
-            "Click again to show them."
+            "Hide rows whose Remediation is SKIPPED (files you chose to leave "
+            "alone via 'Mark as Skipped'). Click again to show them."
         )
         self._skip_toggle_btn.clicked.connect(self._toggle_show_skipped)
         filter_row.addWidget(self._skip_toggle_btn)
@@ -496,10 +504,10 @@ class MainWindow(QMainWindow):
         # Re-enable sorting
         self._table.setSortingEnabled(True)
         
-        # Update status counts
-        self._update_status_counts()
+        # Honor the Hide/Show Skipped toggle on the freshly-built rows.
+        self._apply_skipped_visibility()
         
-        # Update status label
+        # Update status counts
         self._update_status_counts()
     
     def _update_status_counts(self):
@@ -635,52 +643,25 @@ class MainWindow(QMainWindow):
     
     @Slot()
     def _toggle_show_skipped(self):
-        """Show or hide folders skipped this scan. Takes effect immediately."""
+        """Show or hide rows whose Remediation is SKIPPED. Immediate."""
         self._show_skipped = not self._show_skipped
-        self._skip_toggle_btn.setText("Show Skipped" if not self._show_skipped else "Hide Skipped")
-        self._skip_toggle_btn.setChecked(not self._show_skipped)
+        self._skip_toggle_btn.setText(
+            "Show Skipped" if not self._show_skipped else "Hide Skipped"
+        )
         self._apply_skipped_visibility()
 
     def _apply_skipped_visibility(self):
-        """Hide/show table rows based on the Show/Hide Skipped toggle.
+        """Hide/show table rows based on the Hide/Show Skipped toggle.
 
-        A row is 'skipped' when it was preloaded but not (re)scanned this run.
-        While a scan is still running, un-scanned rows are NOT treated as skipped
-        (they may still be scanned) unless they carry a definitive prior status,
-        so the table doesn't blank out at the start. When _show_skipped is True,
-        all rows are visible.
+        'Skipped' means the file's Remediation state is SKIPPED — the ones you
+        marked 'Mark as Skipped' to leave alone. This is a concrete, stable
+        property, so the toggle works the same whether or not a scan is running.
         """
-        show_all = getattr(self, "_show_skipped", True)
-        if show_all:
-            for row in range(self._table.rowCount()):
-                self._table.setRowHidden(row, False)
-            return
-
-        scanned = getattr(self, "_scanned_this_run", set())
-        scan_running = self._worker is not None
-        # States that mean "this folder already has a real result" — i.e. it will
-        # be skipped by a resumed scan. Used to hide clutter mid-scan.
-        definitive = {"CLEAN", "CORRUPT", "EMPTY", "MISSING"}
+        hide = not getattr(self, "_show_skipped", True)
         for row in range(self._table.rowCount()):
-            item = self._table.item(row, COL_FOLDER)
-            path = item.data(Qt.ItemDataRole.UserRole) if item else None
-            if not path:
-                self._table.setRowHidden(row, False)
-                continue
-            scanned_now = str(Path(path)) in scanned
-            verdict_item = self._table.item(row, COL_VERDICT)
-            state = verdict_item.text() if verdict_item else ""
-            if scanned_now:
-                is_skipped = False  # actively scanned this run — always show
-            elif scan_running:
-                # Mid-scan: hide only rows that already have a definitive result
-                # (those are the ones a resumed scan will skip).
-                is_skipped = state in definitive
-            else:
-                # Scan finished (or none running): anything not scanned this run
-                # is skipped.
-                is_skipped = True
-            self._table.setRowHidden(row, is_skipped)
+            remed_item = self._table.item(row, COL_REMEDIATION)
+            remed = remed_item.text() if remed_item else ""
+            self._table.setRowHidden(row, hide and remed == "SKIPPED")
 
     @Slot()
     def _apply_filter(self):
@@ -751,6 +732,10 @@ class MainWindow(QMainWindow):
         # ensures the live-update slots (_on_scan_start etc.) fire.
         self._view_mode = "live"
         
+        # Reset the per-worker activity panel for the new scan.
+        self._worker_rows_clear()
+        self._worker_sizes = {}
+        
         # Pre-populate the table from the database for the selected libraries so
         # the screen isn't blank while the scan runs. Folders that were recently
         # scanned (and therefore skipped) still show their known status; folders
@@ -792,9 +777,6 @@ class MainWindow(QMainWindow):
         update in place as the scan progresses.
         """
         self._live_scan_paths = set()
-        # Paths that actually get (re)scanned this run. Anything preloaded but
-        # not in this set by the end is a "skipped" (recently-scanned) folder.
-        self._scanned_this_run = set()
         self._table.setRowCount(0)
 
         if not self._db_conn:
@@ -825,9 +807,7 @@ class MainWindow(QMainWindow):
             self._info_label.setText(
                 f"🔴 Live scan - {count} known files preloaded; statuses update as the scan runs"
             )
-        # Respect the current Hide/Show Skipped state. At preload time nothing
-        # has been scanned yet, so if Hide Skipped is active every preloaded row
-        # counts as skipped and will be hidden until it's scanned.
+        # Respect the current Hide/Show Skipped state on the freshly-built table.
         self._apply_skipped_visibility()
 
     @Slot()
@@ -886,9 +866,8 @@ class MainWindow(QMainWindow):
         self._stop_btn.setEnabled(False)
         self._worker = None
         
-        # Scan stopped: re-evaluate skipped visibility (now definitive).
-        if not getattr(self, "_show_skipped", True):
-            self._apply_skipped_visibility()
+        # Clear the per-worker activity panel.
+        self._worker_rows_clear()
         
         # Re-enable scan controls based on current view mode
         if self._view_mode == "live":
@@ -929,7 +908,11 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def _on_scan_start(self, folder_path: str):
         """Handle scan start - add row immediately with SCANNING state."""
-        # Only add row in live mode
+        # Add a per-worker progress line (regardless of view mode) so all
+        # concurrently-scanning files are visible at the top of the app.
+        self._worker_row_add(folder_path)
+        
+        # Only add table row in live mode
         if self._view_mode != "live":
             return
         
@@ -937,9 +920,6 @@ class MainWindow(QMainWindow):
         if not hasattr(self, '_live_scan_paths'):
             self._live_scan_paths = set()
         self._live_scan_paths.add(folder_path)
-        if not hasattr(self, '_scanned_this_run'):
-            self._scanned_this_run = set()
-        self._scanned_this_run.add(str(Path(folder_path)))
         
         # If the folder was pre-loaded, just flip its existing row to SCANNING
         # rather than adding a duplicate.
@@ -952,9 +932,6 @@ class MainWindow(QMainWindow):
                     reason_item = self._table.item(row, COL_REASON)
                     if reason_item:
                         reason_item.setText("Scanning...")
-                    # Now that it's being scanned, unhide it if Hide Skipped is on.
-                    if not getattr(self, "_show_skipped", True):
-                        self._table.setRowHidden(row, False)
                     return
         
         # Otherwise add a fresh placeholder row
@@ -980,6 +957,13 @@ class MainWindow(QMainWindow):
     @Slot(str, "qint64")
     def _on_scan_size_known(self, folder_path: str, size_bytes: int):
         """Update size cell as soon as file is found, before null_decode starts."""
+        # Remember the size for this file's per-worker progress line (shown in
+        # any view mode).
+        if not hasattr(self, "_worker_sizes"):
+            self._worker_sizes = {}
+        self._worker_sizes[folder_path] = size_bytes
+        self._worker_row_update(folder_path, 0.0, size_bytes)
+        
         if self._view_mode != "live":
             return
         normalized_path = str(Path(folder_path))
@@ -1001,10 +985,18 @@ class MainWindow(QMainWindow):
         if self._worker is None:
             return
         
-        folder_name = Path(folder_path).name if folder_path else ""
         minutes = int(elapsed_sec // 60)
         seconds = int(elapsed_sec % 60)
-        self._progress_label.setText(f"⏱ Scanning: {folder_name} ({minutes}m {seconds:02d}s)")
+        
+        # Update this file's own per-worker progress line.
+        self._worker_row_update(folder_path, elapsed_sec,
+                                self._worker_sizes.get(folder_path) if hasattr(self, "_worker_sizes") else None)
+        
+        # Keep a compact summary on the shared label (count of files in flight).
+        active = len(self._worker_rows)
+        self._progress_label.setText(
+            f"⏱ Scanning {active} file(s)…" if active else "Scanning…"
+        )
         
         # Only update rows in live mode
         if self._view_mode != "live":
@@ -1046,7 +1038,14 @@ class MainWindow(QMainWindow):
         else:
             status = "Scanning"
         
-        self._progress_label.setText(f"{status}: {folder_name}")
+        # This file finished — drop its per-worker progress line.
+        self._worker_row_remove(folder_path)
+        if hasattr(self, "_worker_sizes"):
+            self._worker_sizes.pop(folder_path, None)
+        
+        active = len(self._worker_rows)
+        summary = f"⏱ Scanning {active} file(s)…" if active else f"{status}: {folder_name}"
+        self._progress_label.setText(summary)
         self._progress_bar.setValue(current)
         self._progress_bar.setFormat(f"{current}/{total} ({100*current//total if total > 0 else 0}%)")
         
@@ -1054,11 +1053,48 @@ class MainWindow(QMainWindow):
         if self._view_mode == "live":
             self._update_row_state(folder_path, state)
             self._update_status_counts()
-            # This folder was scanned, so it's no longer "skipped" — make sure
-            # its row is visible even when Hide Skipped is active.
-            if not getattr(self, "_show_skipped", True):
-                self._apply_skipped_visibility()
     
+    # ------------------------------------------------------------------
+    #  Per-worker activity panel
+    # ------------------------------------------------------------------
+    def _worker_row_add(self, folder_path: str):
+        """Add (or reuse) a per-file progress line for a scanning folder."""
+        if folder_path in self._worker_rows:
+            return
+        name = Path(folder_path).name
+        lbl = QLabel(f"⏱ {name} — starting…")
+        lbl.setObjectName("statusLabel")
+        self._worker_rows[folder_path] = lbl
+        self._worker_panel.addWidget(lbl)
+
+    def _worker_row_update(self, folder_path: str, elapsed_sec: float, size_bytes: int = None):
+        """Update the timer (and optional size) on a folder's progress line."""
+        lbl = self._worker_rows.get(folder_path)
+        if lbl is None:
+            self._worker_row_add(folder_path)
+            lbl = self._worker_rows.get(folder_path)
+            if lbl is None:
+                return
+        name = Path(folder_path).name
+        minutes = int(elapsed_sec // 60)
+        seconds = int(elapsed_sec % 60)
+        size_txt = f"  [{_size_display(size_bytes)}]" if size_bytes else ""
+        lbl.setText(f"⏱ {name}{size_txt} — {minutes}m {seconds:02d}s")
+
+    def _worker_row_remove(self, folder_path: str):
+        """Remove a folder's progress line once it finishes."""
+        lbl = self._worker_rows.pop(folder_path, None)
+        if lbl is not None:
+            self._worker_panel.removeWidget(lbl)
+            lbl.deleteLater()
+
+    def _worker_rows_clear(self):
+        """Remove all per-file progress lines (scan start/stop/finish)."""
+        for lbl in list(self._worker_rows.values()):
+            self._worker_panel.removeWidget(lbl)
+            lbl.deleteLater()
+        self._worker_rows.clear()
+
     def _set_header_tooltip(self, col: int, text: str):
         """Attach a tooltip to a horizontal header section."""
         item = self._table.horizontalHeaderItem(col)
@@ -1164,9 +1200,8 @@ class MainWindow(QMainWindow):
             self._worker.deleteLater()
             self._worker = None
         
-        # Scan is done: re-evaluate skipped visibility (now definitive).
-        if not getattr(self, "_show_skipped", True):
-            self._apply_skipped_visibility()
+        # Clear the per-worker activity panel.
+        self._worker_rows_clear()
         
         # Show summary
         msg = (

@@ -18,7 +18,9 @@ tasks see [WORKFLOW.md](WORKFLOW.md); for full reference and CLI see
 │  Library: ☑ A-H ☑ I-S ☑ T-Z   Parallel scans:[2▾]  Timeout/file:[30 min▾]   │
 │                                              [Start Scan]  [Stop]             │
 ├────────────────────────────────────────────────────────────────────────────┤
-│  Last scan: ...              [███████░░░░░░░] 45/247 (18%)                    │
+│  ⏱ Scanning 2 file(s)…       [███████░░░░░░░] 45/247 (18%)                    │
+│  ⏱ The Accidental Tourist (1988)  [4.2G] — 3m 21s                            │
+│  ⏱ Naked (1993)                   [7.3G] — 1m 05s                            │
 ├────────────────────────────────────────────────────────────────────────────┤
 │  Status:[All▾]  Remediation:[Any▾]  Search:[__________]  [Hide Skipped]      │
 ├────────────────────────────────────────────────────────────────────────────┤
@@ -114,6 +116,24 @@ Folders scanned within the last 7 days with a definitive result are **skipped** 
 resumed scan (they already have an answer). Use the CLI `scan --rescan` to force a
 full re-scan, or `rescan-corrupt` to re-check only flagged folders.
 
+### Per-worker activity panel
+
+Just below the overall progress bar, one line appears **per concurrently-scanning
+file** — so with `Parallel scans = 2` you see both movies in flight, each with its
+own name, size, and independent live timer:
+
+```
+⏱ The Accidental Tourist (1988)  [4.2G] — 3m 21s
+⏱ Naked (1993)                   [7.3G] — 1m 05s
+```
+
+Each line appears when its file starts, ticks up while ffmpeg decodes it, and
+disappears when that file finishes. A regular scan **decodes every file end to end**
+(that's how it catches mid-file corruption), so large movies legitimately sit here
+for minutes — this panel makes it obvious that multiple files are progressing rather
+than one being "stuck". (This is a normal scan, not a Deep Inspect/Full Decode —
+those only run when you request them from the right-click menu.)
+
 ---
 
 ## Filters (above the table)
@@ -124,7 +144,7 @@ full re-scan, or `rescan-corrupt` to re-check only flagged folders.
 | **Problematic** (in the Status list) | Shortcut for **TIMEOUT + UNKNOWN + ERROR** at once — every file worth re-scanning. Sits above a dotted separator. |
 | **Remediation** | Show one workflow state, or **Any**. |
 | **Search** | Filter by folder name as you type (**Ctrl+F** to focus). |
-| **Hide Skipped / Show Skipped** | Toggle. Hides folders not being worked this scan so you can focus on live activity. Mid-scan it hides rows that already have a definitive result; after the scan it hides anything not scanned this run. Click again to show them. |
+| **Hide Skipped / Show Skipped** | Toggle. Hides rows whose **Remediation is SKIPPED** — files you chose to leave alone via "Mark as Skipped". Applies immediately, in any view, scanning or not. Click again to show them. |
 
 ---
 
