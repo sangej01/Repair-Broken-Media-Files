@@ -283,13 +283,18 @@ def _classify_stderr(stderr: str) -> str:
     return "CLEAN"
 
 
-def null_decode(video_path: Path, timeout_sec: int = 1800, progress_callback=None) -> Tuple[str, str, float]:
+def null_decode(video_path: Path, timeout_sec: int = 1800, progress_callback=None,
+                cancel_flag=None) -> Tuple[str, str, float]:
     """
     Run ffmpeg null-decode to detect corruption.
     Returns: (scan_state, stderr_tail, elapsed_sec)
-    scan_state is one of: CLEAN, CORRUPT, ERROR, TIMEOUT
-    
+    scan_state is one of: CLEAN, CORRUPT, ERROR, TIMEOUT, CANCELLED
+
     progress_callback: optional function(elapsed_sec) called periodically during scan
+    cancel_flag: optional function() -> bool. When it returns True the scan is being
+        cancelled; a non-zero ffmpeg exit in that case is because WE killed ffmpeg,
+        not because the file is corrupt, so we return CANCELLED (which the caller
+        must NOT record as a verdict).
     """
     start = time.time()
     proc = None
@@ -325,6 +330,16 @@ def null_decode(video_path: Path, timeout_sec: int = 1800, progress_callback=Non
         # Poll process and emit progress updates
         stderr_lines = []
         while proc.poll() is None:
+            # If the scan is being cancelled, stop ffmpeg and report CANCELLED
+            # (a killed ffmpeg exits non-zero, which must NOT be read as CORRUPT).
+            if cancel_flag and cancel_flag():
+                try:
+                    proc.kill()
+                    proc.wait(timeout=5)
+                except Exception:
+                    pass
+                return "CANCELLED", "scan cancelled", time.time() - start
+            
             # Check if we've exceeded timeout
             elapsed = time.time() - start
             if timeout_sec > 0 and elapsed > timeout_sec:
@@ -383,6 +398,11 @@ def null_decode(video_path: Path, timeout_sec: int = 1800, progress_callback=Non
     
     elapsed = time.time() - start
     stderr_tail = stderr_output[-400:].strip() if stderr_output else ""
+    
+    # If cancellation kicked in right as ffmpeg ended, a non-zero exit means WE
+    # killed it — not corruption. Don't record a verdict.
+    if cancel_flag and cancel_flag():
+        return "CANCELLED", "scan cancelled", elapsed
     
     if proc.returncode != 0:
         # ffmpeg exited non-zero -- almost always corruption it couldn't push past
@@ -1162,34 +1182,38 @@ def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional
         progress_callback(0, total, "", "discovery")
     
     # Build the set of folders to skip:
-    #   1. Recently scanned with a definitive result (CLEAN/CORRUPT/EMPTY/MISSING)
+    #   1. A definitive prior verdict (CLEAN/CORRUPT/EMPTY) AND the file is
+    #      UNCHANGED since (same size + mtime). A CLEAN file that hasn't changed
+    #      on disk never needs re-scanning — the result is deterministic. This
+    #      replaces the old crude "skip if scanned < 7 days" rule.
     #   2. Currently locked by another worker (multi-PC mode)
+    #
+    # Records with no stored mtime (scanned before this feature existed) can't
+    # be proven unchanged, so they are re-scanned once to capture a baseline.
     skip_paths = set()
 
     if not rescan:
-        cutoff_dt = datetime.utcnow() - timedelta(days=7)
         existing = db.get_files(db_conn)
-        # Skip folder only if: scanned recently AND result was definitive (not TIMEOUT/ERROR)
-        # last_scan_at can be either a string (SQLite ISO text) or a datetime (Postgres TIMESTAMPTZ),
-        # so normalize both sides to datetime objects before comparing.
+        definitive = ("CLEAN", "CORRUPT", "EMPTY")
         for r in existing:
-            last_scan = r.get("last_scan_at")
-            if not last_scan:
+            if r.get("scan_state") not in definitive:
                 continue
-            if r.get("scan_state") in ("TIMEOUT", "ERROR", "UNKNOWN", "SCANNING"):
+            stored_mtime = r.get("mtime")
+            stored_size = r.get("size_bytes")
+            if stored_mtime is None or not stored_size:
+                # No baseline to compare — must re-scan once to record it.
                 continue
-            # Normalize to naive UTC datetime
-            if isinstance(last_scan, str):
-                try:
-                    last_dt = datetime.fromisoformat(last_scan.replace("Z", "+00:00"))
-                except ValueError:
-                    continue
-            else:
-                last_dt = last_scan
-            # Strip timezone info for comparison (cutoff_dt is naive UTC)
-            if last_dt.tzinfo is not None:
-                last_dt = last_dt.replace(tzinfo=None)
-            if last_dt > cutoff_dt:
+            video_path = r.get("video_path")
+            if not video_path:
+                continue
+            try:
+                st = os.stat(video_path)
+            except OSError:
+                # File/folder gone or unreadable — let the scan handle it
+                # (it will mark MISSING/ERROR appropriately).
+                continue
+            # Unchanged if both size and mtime match (allow tiny fs mtime jitter).
+            if st.st_size == stored_size and abs(st.st_mtime - float(stored_mtime)) < 2.0:
                 skip_paths.add(r["folder_path"])
 
     # Always exclude folders currently locked by another worker (even with --rescan).
@@ -1275,7 +1299,9 @@ def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional
             }
         
         try:
-            size = video.stat().st_size
+            st = video.stat()
+            size = st.st_size
+            mtime = st.st_mtime
         except OSError as e:
             return {
                 "folder_path": str(folder),
@@ -1295,12 +1321,20 @@ def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional
             if file_progress_callback:
                 file_progress_callback(str(folder), elapsed_sec)
         
-        scan_state, stderr_tail, elapsed = null_decode(video, timeout_sec, progress_callback=file_progress)
+        scan_state, stderr_tail, elapsed = null_decode(
+            video, timeout_sec, progress_callback=file_progress, cancel_flag=cancel_flag
+        )
+        
+        # A cancelled decode never produced a real verdict — signal the main
+        # loop to leave this folder alone (it will be reset to UNKNOWN).
+        if scan_state == "CANCELLED":
+            return {"folder_path": str(folder), "_cancelled": True}
         
         return {
             "folder_path": str(folder),
             "video_path": str(video),
             "size_bytes": size,
+            "mtime": mtime,
             "scan_state": scan_state,
             "stderr_tail": stderr_tail,
             "last_scan_secs": elapsed,
@@ -1367,6 +1401,24 @@ def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional
                 # Don't count toward stats; another PC is handling it.
                 if result.get("_skipped_locked"):
                     # No DB update, no progress (other PC will report)
+                    continue
+                
+                # Decode was cancelled mid-flight — do NOT record a verdict
+                # (a killed ffmpeg looks non-zero but isn't corruption). Reset
+                # the folder to UNKNOWN so the next scan re-checks it.
+                if result.get("_cancelled"):
+                    try:
+                        fp = result["folder_path"]
+                        table = db._files_table(db_conn)
+                        ph = db._ph(db_conn)
+                        db._execute(
+                            db_conn,
+                            f"UPDATE {table} SET scan_state='UNKNOWN', worker_id=NULL, "
+                            f"lock_until=NULL WHERE folder_path={ph}",
+                            (fp,),
+                        )
+                    except Exception:
+                        pass
                     continue
                 
                 # Always write completed results to DB, even if cancelled —

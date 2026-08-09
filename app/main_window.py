@@ -1047,6 +1047,10 @@ class MainWindow(QMainWindow):
         active = len(self._worker_rows)
         summary = f"⏱ Scanning {active} file(s)…" if active else f"{status}: {folder_name}"
         self._progress_label.setText(summary)
+        # Keep the bar's maximum in sync with the actual work total (folders to
+        # scan this run), so the percentage is meaningful.
+        if total > 0 and self._progress_bar.maximum() != total:
+            self._progress_bar.setMaximum(total)
         self._progress_bar.setValue(current)
         self._progress_bar.setFormat(f"{current}/{total} ({100*current//total if total > 0 else 0}%)")
         
@@ -1059,41 +1063,72 @@ class MainWindow(QMainWindow):
     #  Per-worker activity panel
     # ------------------------------------------------------------------
     def _worker_row_add(self, folder_path: str):
-        """Add (or reuse) a per-file progress line for a scanning folder."""
+        """Add (or reuse) a per-file progress row: name + pulsing bar + timer.
+
+        A normal scan has no percentage (ffmpeg just decodes end-to-end), so the
+        bar is indeterminate/pulsing to show the file is actively being worked.
+        """
         if folder_path in self._worker_rows:
             return
         name = Path(folder_path).name
-        lbl = QLabel(f"⏱ {name} — starting…")
-        lbl.setObjectName("statusLabel")
-        self._worker_rows[folder_path] = lbl
-        self._worker_panel.addWidget(lbl)
+
+        container = QWidget()
+        row = QHBoxLayout(container)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+
+        name_lbl = QLabel(f"⏱ {name}")
+        name_lbl.setObjectName("statusLabel")
+        name_lbl.setMinimumWidth(280)
+        row.addWidget(name_lbl)
+
+        bar = QProgressBar()
+        bar.setRange(0, 0)          # 0/0 => indeterminate (pulsing)
+        bar.setTextVisible(False)
+        bar.setFixedHeight(14)
+        row.addWidget(bar, 1)
+
+        timer_lbl = QLabel("0m 00s")
+        timer_lbl.setObjectName("statusLabel")
+        timer_lbl.setMinimumWidth(70)
+        row.addWidget(timer_lbl)
+
+        self._worker_rows[folder_path] = {
+            "container": container, "name": name_lbl,
+            "bar": bar, "timer": timer_lbl, "size": None,
+        }
+        self._worker_panel.addWidget(container)
+        container.show()
 
     def _worker_row_update(self, folder_path: str, elapsed_sec: float, size_bytes: int = None):
-        """Update the timer (and optional size) on a folder's progress line."""
-        lbl = self._worker_rows.get(folder_path)
-        if lbl is None:
+        """Update the timer (and optional size) on a folder's progress row."""
+        rec = self._worker_rows.get(folder_path)
+        if rec is None:
             self._worker_row_add(folder_path)
-            lbl = self._worker_rows.get(folder_path)
-            if lbl is None:
+            rec = self._worker_rows.get(folder_path)
+            if rec is None:
                 return
+        if size_bytes:
+            rec["size"] = size_bytes
         name = Path(folder_path).name
+        size_txt = f"  [{_size_display(rec['size'])}]" if rec.get("size") else ""
+        rec["name"].setText(f"⏱ {name}{size_txt}")
         minutes = int(elapsed_sec // 60)
         seconds = int(elapsed_sec % 60)
-        size_txt = f"  [{_size_display(size_bytes)}]" if size_bytes else ""
-        lbl.setText(f"⏱ {name}{size_txt} — {minutes}m {seconds:02d}s")
+        rec["timer"].setText(f"{minutes}m {seconds:02d}s")
 
     def _worker_row_remove(self, folder_path: str):
-        """Remove a folder's progress line once it finishes."""
-        lbl = self._worker_rows.pop(folder_path, None)
-        if lbl is not None:
-            self._worker_panel.removeWidget(lbl)
-            lbl.deleteLater()
+        """Remove a folder's progress row once it finishes."""
+        rec = self._worker_rows.pop(folder_path, None)
+        if rec is not None:
+            self._worker_panel.removeWidget(rec["container"])
+            rec["container"].deleteLater()
 
     def _worker_rows_clear(self):
-        """Remove all per-file progress lines (scan start/stop/finish)."""
-        for lbl in list(self._worker_rows.values()):
-            self._worker_panel.removeWidget(lbl)
-            lbl.deleteLater()
+        """Remove all per-file progress rows (scan start/stop/finish)."""
+        for rec in list(self._worker_rows.values()):
+            self._worker_panel.removeWidget(rec["container"])
+            rec["container"].deleteLater()
         self._worker_rows.clear()
 
     def _set_header_tooltip(self, col: int, text: str):

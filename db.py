@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS files (
     folder_path     TEXT    NOT NULL UNIQUE,
     video_path      TEXT,
     size_bytes      INTEGER NOT NULL DEFAULT 0,
+    mtime           REAL,
     duration_sec    REAL,
     scan_state      TEXT    NOT NULL DEFAULT 'UNKNOWN',
     last_scan_at    TEXT,
@@ -137,6 +138,8 @@ def _init_sqlite() -> RepairDBConnection:
         raw.execute("ALTER TABLE files ADD COLUMN worker_id TEXT")
     if "lock_until" not in cols:
         raw.execute("ALTER TABLE files ADD COLUMN lock_until TEXT")
+    if "mtime" not in cols:
+        raw.execute("ALTER TABLE files ADD COLUMN mtime REAL")
     raw.execute("CREATE INDEX IF NOT EXISTS idx_files_lock_until ON files(lock_until)")
     raw.commit()
     return RepairDBConnection("sqlite", raw)
@@ -152,6 +155,7 @@ CREATE TABLE IF NOT EXISTS repair_files (
     folder_path     TEXT    NOT NULL UNIQUE,
     video_path      TEXT,
     size_bytes      BIGINT  NOT NULL DEFAULT 0,
+    mtime           DOUBLE PRECISION,
     duration_sec    DOUBLE PRECISION,
     scan_state      TEXT    NOT NULL DEFAULT 'UNKNOWN',
     last_scan_at    TIMESTAMPTZ,
@@ -247,6 +251,8 @@ def _init_postgres() -> RepairDBConnection:
 
     with raw.cursor() as cur:
         cur.execute(_POSTGRES_SCHEMA)
+        # Migrate pre-existing tables that lack the mtime column.
+        cur.execute("ALTER TABLE repair_files ADD COLUMN IF NOT EXISTS mtime DOUBLE PRECISION")
     raw.commit()
 
     return RepairDBConnection("postgres", raw)
@@ -335,6 +341,7 @@ def upsert_file_record(conn: RepairDBConnection, record: Dict[str, Any]):
             UPDATE {table} SET
                 video_path = {ph},
                 size_bytes = {ph},
+                mtime = {ph},
                 duration_sec = {ph},
                 scan_state = {ph},
                 last_scan_at = {ph},
@@ -347,6 +354,7 @@ def upsert_file_record(conn: RepairDBConnection, record: Dict[str, Any]):
         params = (
             record.get("video_path"),
             record.get("size_bytes", 0),
+            record.get("mtime"),
             record.get("duration_sec"),
             record.get("scan_state", "UNKNOWN"),
             record.get("last_scan_at", now),
@@ -359,15 +367,16 @@ def upsert_file_record(conn: RepairDBConnection, record: Dict[str, Any]):
     else:
         sql = f"""
             INSERT INTO {table} (
-                folder_path, video_path, size_bytes, duration_sec,
+                folder_path, video_path, size_bytes, mtime, duration_sec,
                 scan_state, last_scan_at, last_scan_secs, stderr_tail,
                 radarr_movie_id, radarr_tmdb_id, first_seen_at
-            ) VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph})
+            ) VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph})
         """
         params = (
             record["folder_path"],
             record.get("video_path"),
             record.get("size_bytes", 0),
+            record.get("mtime"),
             record.get("duration_sec"),
             record.get("scan_state", "UNKNOWN"),
             record.get("last_scan_at", now),
