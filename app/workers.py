@@ -13,7 +13,7 @@ class ScanWorker(QThread):
     scan_start = Signal(str)  # folder_path - emitted when folder scan starts
     scan_size_known = Signal(str, "qint64")  # folder_path, size_bytes - emitted when file size is known
     progress = Signal(int, int, str, str)  # current, total, folder_name, state
-    file_progress = Signal(str, float)  # folder_path, elapsed_sec - emitted during file scan
+    file_progress = Signal(str, float, object)  # folder_path, elapsed_sec, fraction(0..1 or None)
     result_row = Signal(dict)  # FileRecord as dict
     finished = Signal(dict)  # ScanStats as dict
     error = Signal(str)
@@ -56,10 +56,10 @@ class ScanWorker(QThread):
                 self.progress.emit(current, total, folder_path, state)
             
             # File progress callback that emits during each file scan
-            def file_progress_callback(folder_path, elapsed_sec):
+            def file_progress_callback(folder_path, elapsed_sec, fraction=None):
                 if self._cancelled:
                     return
-                self.file_progress.emit(folder_path, elapsed_sec)
+                self.file_progress.emit(folder_path, elapsed_sec, fraction)
             
             # Cancel check callback
             def cancel_check():

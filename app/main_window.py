@@ -979,8 +979,8 @@ class MainWindow(QMainWindow):
                         size_item.setData(Qt.ItemDataRole.UserRole + 1, size_bytes)
                     break
     
-    @Slot(str, float)
-    def _on_file_progress(self, folder_path: str, elapsed_sec: float):
+    @Slot(str, float, object)
+    def _on_file_progress(self, folder_path: str, elapsed_sec: float, fraction=None):
         """Handle per-file progress update during scan."""
         # Ignore late signals when no worker
         if self._worker is None:
@@ -989,9 +989,12 @@ class MainWindow(QMainWindow):
         minutes = int(elapsed_sec // 60)
         seconds = int(elapsed_sec % 60)
         
-        # Update this file's own per-worker progress line.
-        self._worker_row_update(folder_path, elapsed_sec,
-                                self._worker_sizes.get(folder_path) if hasattr(self, "_worker_sizes") else None)
+        # Update this file's own per-worker progress line (with % when known).
+        self._worker_row_update(
+            folder_path, elapsed_sec,
+            self._worker_sizes.get(folder_path) if hasattr(self, "_worker_sizes") else None,
+            fraction,
+        )
         
         # Keep a compact summary on the shared label (count of files in flight).
         active = len(self._worker_rows)
@@ -1100,8 +1103,13 @@ class MainWindow(QMainWindow):
         self._worker_panel.addWidget(container)
         container.show()
 
-    def _worker_row_update(self, folder_path: str, elapsed_sec: float, size_bytes: int = None):
-        """Update the timer (and optional size) on a folder's progress row."""
+    def _worker_row_update(self, folder_path: str, elapsed_sec: float,
+                           size_bytes: int = None, fraction=None):
+        """Update a folder's progress row: name, size, %-bar (or pulse) + timer.
+
+        `fraction` (0..1) turns the bar determinate with a percentage. When it's
+        None (duration unknown) the bar stays indeterminate/pulsing.
+        """
         rec = self._worker_rows.get(folder_path)
         if rec is None:
             self._worker_row_add(folder_path)
@@ -1113,6 +1121,21 @@ class MainWindow(QMainWindow):
         name = Path(folder_path).name
         size_txt = f"  [{_size_display(rec['size'])}]" if rec.get("size") else ""
         rec["name"].setText(f"⏱ {name}{size_txt}")
+
+        bar = rec["bar"]
+        if fraction is None:
+            # Unknown total — keep it pulsing.
+            if bar.maximum() != 0:
+                bar.setRange(0, 0)
+            bar.setTextVisible(False)
+        else:
+            pct = int(max(0.0, min(1.0, fraction)) * 100)
+            if bar.maximum() != 100:
+                bar.setRange(0, 100)
+            bar.setValue(pct)
+            bar.setFormat(f"{pct}%")
+            bar.setTextVisible(True)
+
         minutes = int(elapsed_sec // 60)
         seconds = int(elapsed_sec % 60)
         rec["timer"].setText(f"{minutes}m {seconds:02d}s")

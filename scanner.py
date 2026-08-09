@@ -283,18 +283,42 @@ def _classify_stderr(stderr: str) -> str:
     return "CLEAN"
 
 
+def _probe_duration(video_path: Path) -> Optional[float]:
+    """Return media duration in seconds via a fast ffprobe, or None.
+
+    Used to convert ffmpeg's live decode position into a completion percentage.
+    Cheap (sub-second) and best-effort — any failure returns None so the caller
+    falls back to an indeterminate/pulsing bar.
+    """
+    try:
+        proc = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(video_path)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            timeout=30, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        val = (proc.stdout or "").strip()
+        d = float(val)
+        return d if d > 0 else None
+    except Exception:
+        return None
+
+
 def null_decode(video_path: Path, timeout_sec: int = 1800, progress_callback=None,
-                cancel_flag=None) -> Tuple[str, str, float]:
+                cancel_flag=None, duration_sec: float = None) -> Tuple[str, str, float]:
     """
     Run ffmpeg null-decode to detect corruption.
     Returns: (scan_state, stderr_tail, elapsed_sec)
     scan_state is one of: CLEAN, CORRUPT, ERROR, TIMEOUT, CANCELLED
 
-    progress_callback: optional function(elapsed_sec) called periodically during scan
+    progress_callback: optional function(elapsed_sec, fraction) called periodically.
+        `fraction` is 0..1 decode progress when `duration_sec` is known, else None.
     cancel_flag: optional function() -> bool. When it returns True the scan is being
         cancelled; a non-zero ffmpeg exit in that case is because WE killed ffmpeg,
         not because the file is corrupt, so we return CANCELLED (which the caller
         must NOT record as a verdict).
+    duration_sec: total media duration (from ffprobe) used to turn ffmpeg's live
+        decode position into a real completion percentage.
     """
     start = time.time()
     proc = None
@@ -311,11 +335,31 @@ def null_decode(video_path: Path, timeout_sec: int = 1800, progress_callback=Non
         except Exception:
             pass  # Use default if we can't stat
     
+    # Shared decode-position clock (seconds), updated by a stdout reader thread
+    # consuming ffmpeg's machine-readable "-progress pipe:1" output.
+    last_pos = [0.0]
+    prog_thread = None
+    
+    def _consume_progress(stream):
+        try:
+            for pline in stream:
+                pline = pline.strip()
+                if pline.startswith("out_time_us=") or pline.startswith("out_time_ms="):
+                    try:
+                        val = int(pline.split("=", 1)[1])
+                        if val >= 0:
+                            last_pos[0] = val / 1_000_000.0
+                    except (ValueError, IndexError):
+                        pass
+        except Exception:
+            pass
+    
     try:
-        # Start ffmpeg process without waiting
-        # CREATE_NEW_PROCESS_GROUP allows us to kill it properly on Windows
+        # -progress pipe:1 -> machine-readable decode position on stdout.
+        # stderr stays reserved for -v error corruption lines.
         proc = subprocess.Popen(
-            ["ffmpeg", "-v", "error", "-i", str(video_path), "-f", "null", "-"],
+            ["ffmpeg", "-nostdin", "-v", "error", "-progress", "pipe:1",
+             "-i", str(video_path), "-f", "null", "-"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -326,6 +370,10 @@ def null_decode(video_path: Path, timeout_sec: int = 1800, progress_callback=Non
         
         # Register for tracking so we can kill it from outside
         _register_process(proc)
+        
+        # Reader thread for the progress pipe (stdout).
+        prog_thread = threading.Thread(target=_consume_progress, args=(proc.stdout,), daemon=True)
+        prog_thread.start()
         
         # Poll process and emit progress updates
         stderr_lines = []
@@ -352,31 +400,24 @@ def null_decode(video_path: Path, timeout_sec: int = 1800, progress_callback=Non
                 # Use TIMEOUT state (not ERROR) so users can rescan with longer timeout
                 return "TIMEOUT", f"TIMEOUT after {timeout_sec}s (file may be too large for current timeout)", elapsed
             
-            # Emit progress callback
+            # Emit progress callback with a real fraction when duration is known.
             if progress_callback:
-                progress_callback(elapsed)
+                frac = None
+                if duration_sec and duration_sec > 0:
+                    frac = max(0.0, min(1.0, last_pos[0] / duration_sec))
+                progress_callback(elapsed, frac)
             
-            # Read stderr if available (non-blocking)
-            try:
-                import select
-                if hasattr(select, 'select'):
-                    # Unix-like
-                    ready, _, _ = select.select([proc.stderr], [], [], 0.5)
-                    if ready:
-                        line = proc.stderr.readline()
-                        if line:
-                            stderr_lines.append(line)
-                else:
-                    # Windows - just sleep
-                    time.sleep(0.5)
-            except:
-                # Fallback - just sleep
-                time.sleep(0.5)
+            time.sleep(0.5)
         
-        # Process completed, get remaining output
-        remaining_stderr, _ = proc.communicate()
+        # Process completed, get remaining output (stderr = corruption lines)
+        _remaining_stdout, remaining_stderr = proc.communicate()
         if remaining_stderr:
             stderr_lines.append(remaining_stderr)
+        if prog_thread:
+            prog_thread.join(timeout=2)
+        # Final 100% tick
+        if progress_callback:
+            progress_callback(time.time() - start, 1.0 if (duration_sec and duration_sec > 0) else None)
         
         stderr_output = ''.join(stderr_lines)
         
@@ -1316,13 +1357,18 @@ def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional
         if size_known_callback:
             size_known_callback(folder_str, size)
         
-        # Progress callback for this specific file
-        def file_progress(elapsed_sec):
+        # Fast ffprobe for duration so the per-file bar can show a real % (a
+        # sub-second call; failure just falls back to a pulsing bar).
+        duration = _probe_duration(video)
+        
+        # Progress callback for this specific file (forwards % when known).
+        def file_progress(elapsed_sec, frac=None):
             if file_progress_callback:
-                file_progress_callback(str(folder), elapsed_sec)
+                file_progress_callback(str(folder), elapsed_sec, frac)
         
         scan_state, stderr_tail, elapsed = null_decode(
-            video, timeout_sec, progress_callback=file_progress, cancel_flag=cancel_flag
+            video, timeout_sec, progress_callback=file_progress,
+            cancel_flag=cancel_flag, duration_sec=duration
         )
         
         # A cancelled decode never produced a real verdict — signal the main
