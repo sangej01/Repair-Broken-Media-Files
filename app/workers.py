@@ -18,13 +18,15 @@ class ScanWorker(QThread):
     finished = Signal(dict)  # ScanStats as dict
     error = Signal(str)
     
-    def __init__(self, roots: List, workers: int, rescan: bool = False, limit: Optional[int] = None, timeout_sec: int = 1800):
+    def __init__(self, roots: List, workers: int, rescan: bool = False, limit: Optional[int] = None,
+                 timeout_sec: int = 1800, folders: Optional[List] = None):
         super().__init__()
         self.roots = roots
         self.workers = workers
         self.rescan = rescan
         self.limit = limit
         self.timeout_sec = timeout_sec
+        self.folders = folders  # explicit folder list for targeted re-scans
         self._cancelled = False
         self._active_processes = []  # Track ffmpeg processes
     
@@ -81,6 +83,7 @@ class ScanWorker(QThread):
                 rescan=self.rescan,
                 limit=self.limit,
                 timeout_sec=self.timeout_sec,
+                folders=self.folders,
             )
             
             # Emit finished with stats

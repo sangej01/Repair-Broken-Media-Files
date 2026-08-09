@@ -41,6 +41,13 @@ def cli_scan(args):
     for r in roots:
         print(f"  {r}")
     
+    # Refuse to run if another scanner (e.g. the GUI) is active on this DB.
+    import scanlock
+    if scanlock.acquire("cli") is None:
+        print(f"ERROR: {scanlock.holder_description()} is already using the database.")
+        print("Close the other scanner (or the GUI) before running a CLI scan.")
+        sys.exit(2)
+    
     # Initialize database
     conn = db.init_db()
     
@@ -90,6 +97,7 @@ def cli_scan(args):
     print(f"\nDatabase: {config.DB_PATH}")
     
     conn.close()
+    scanlock.release()
 
 
 def cli_rescan_corrupt(args):
@@ -160,6 +168,14 @@ def cli_rescan_corrupt(args):
         conn.close()
         return
 
+    # Refuse to run if another scanner (e.g. the GUI) is active on this DB.
+    import scanlock
+    if scanlock.acquire("cli") is None:
+        print(f"\nERROR: {scanlock.holder_description()} is already using the database.")
+        print("Close the other scanner (or the GUI) before running a CLI re-scan.")
+        conn.close()
+        sys.exit(2)
+
     run_id = db.record_run_start(conn, "rescan-corrupt", {
         "workers": opts.workers,
         "states": states,
@@ -195,6 +211,7 @@ def cli_rescan_corrupt(args):
     print(f"  ERROR:        {stats['error_count']}")
     print(f"  EMPTY:        {stats['empty_count']}")
     conn.close()
+    scanlock.release()
 
 
 def cli_list(args):

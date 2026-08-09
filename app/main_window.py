@@ -450,6 +450,14 @@ class MainWindow(QMainWindow):
         
         action_row.addStretch()
         
+        self._rescan_timeouts_btn = QPushButton("Re-scan TIMEOUTs")
+        self._rescan_timeouts_btn.setToolTip(
+            "Re-scan every file currently in TIMEOUT state. Most TIMEOUTs are "
+            "transient NAS I/O stalls and come back CLEAN on a fresh scan."
+        )
+        self._rescan_timeouts_btn.clicked.connect(self._rescan_timeouts)
+        action_row.addWidget(self._rescan_timeouts_btn)
+        
         self._queue_btn = QPushButton("Queue for Remediation")
         self._queue_btn.clicked.connect(self._queue_selected)
         action_row.addWidget(self._queue_btn)
@@ -773,6 +781,17 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No Library Selected", "Please select at least one library to scan")
             return
         
+        # Acquire the cross-process scan lock so a CLI scan can't collide with us
+        # (two SQLite writers can hang/crash the app).
+        import scanlock
+        if scanlock.acquire("gui") is None:
+            QMessageBox.warning(
+                self, "Scanner Busy",
+                f"Cannot start: {scanlock.holder_description()} is already using "
+                f"the database.\n\nClose the other scanner and try again.",
+            )
+            return
+        
         workers = int(self._workers_combo.currentText())
         timeout_sec = _TIMEOUT_MAP.get(self._timeout_combo.currentText(), 1800)
         
@@ -816,7 +835,118 @@ class MainWindow(QMainWindow):
         self._worker.finished.connect(self._on_scan_finished)
         self._worker.error.connect(self._on_error)
         self._worker.start()
-    
+
+    def _checked_folder_paths(self) -> list:
+        """Return folder paths for all checked (visible) rows."""
+        paths = []
+        for row in range(self._table.rowCount()):
+            widget = self._table.cellWidget(row, COL_SELECT)
+            if not widget:
+                continue
+            checkbox = widget.findChild(QCheckBox)
+            if checkbox and checkbox.isChecked():
+                item = self._table.item(row, COL_FOLDER)
+                if item and item.data(Qt.ItemDataRole.UserRole):
+                    paths.append(item.data(Qt.ItemDataRole.UserRole))
+        return paths
+
+    def _rescan_folders(self, folders: list, label: str = "selected"):
+        """Re-scan a specific set of folders (force, ignoring skip rules).
+
+        Safe within the running app: it uses the same worker/lock as a normal
+        scan, so it never collides with the GUI's own DB access. Use this for
+        TIMEOUTs and other rows worth re-checking — no CLI needed.
+        """
+        if not folders:
+            QMessageBox.information(self, "Nothing to Re-scan",
+                                    "No folders to re-scan.")
+            return
+        if self._worker and self._worker.isRunning():
+            QMessageBox.information(self, "Scan Running",
+                                    "A scan is already running. Stop it first.")
+            return
+
+        import scanlock
+        if scanlock.acquire("gui") is None:
+            QMessageBox.warning(
+                self, "Scanner Busy",
+                f"Cannot start: {scanlock.holder_description()} is already using "
+                f"the database.\n\nClose the other scanner and try again.",
+            )
+            return
+
+        reply = QMessageBox.question(
+            self, "Re-scan",
+            f"Re-scan {len(folders)} {label} folder(s) now?\n\n"
+            f"This forces a fresh decode (ignores the 'unchanged' skip).",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            scanlock.release()
+            return
+
+        # Switch to live view so results update in place.
+        self._view_mode = "live"
+        from pathlib import Path as _P
+        folder_paths = [_P(f) for f in folders]
+
+        workers = int(self._workers_combo.currentText())
+        timeout_sec = _TIMEOUT_MAP.get(self._timeout_combo.currentText(), 1800)
+
+        self._worker_rows_clear()
+        self._worker_sizes = {}
+        # Preload just these rows so they're visible and update live.
+        self._live_scan_paths = set(str(p) for p in folder_paths)
+        self._table.setRowCount(0)
+        for fp in folder_paths:
+            rec = next((f for f in db.get_files(self._db_conn)
+                        if str(_P(f["folder_path"])) == str(fp)), None)
+            if rec:
+                self._add_file_row(rec)
+
+        self._scan_btn.setEnabled(False)
+        self._stop_btn.setEnabled(True)
+        self._progress_bar.setRange(0, 100)
+        self._progress_bar.setValue(0)
+        self._progress_bar.setFormat("Starting re-scan...")
+        self._progress_label.setText(f"Re-scanning {len(folder_paths)} {label} folder(s)...")
+
+        self._worker = ScanWorker([], workers, rescan=True, limit=None,
+                                  timeout_sec=timeout_sec, folders=folder_paths)
+        self._worker.discovery.connect(self._on_discovery)
+        self._worker.scan_start.connect(self._on_scan_start)
+        self._worker.scan_size_known.connect(self._on_scan_size_known)
+        self._worker.progress.connect(self._on_progress)
+        self._worker.file_progress.connect(self._on_file_progress)
+        self._worker.result_row.connect(self._on_result_row)
+        self._worker.finished.connect(self._on_scan_finished)
+        self._worker.error.connect(self._on_error)
+        self._worker.start()
+
+    @Slot()
+    def _rescan_timeouts(self):
+        """Re-scan every folder currently in TIMEOUT state."""
+        rows = db.get_files(self._db_conn, filter_state="TIMEOUT")
+        folders = [r["folder_path"] for r in rows]
+        if not folders:
+            QMessageBox.information(self, "No TIMEOUTs",
+                                    "There are no TIMEOUT files to re-scan.")
+            return
+        self._rescan_folders(folders, label="TIMEOUT")
+
+    @Slot()
+    def _rescan_selected(self):
+        """Re-scan the checked rows (or the current row if none checked)."""
+        folders = self._checked_folder_paths()
+        if not folders:
+            # fall back to the row under the context menu / current selection
+            row = self._table.currentRow()
+            if row >= 0:
+                item = self._table.item(row, COL_FOLDER)
+                if item and item.data(Qt.ItemDataRole.UserRole):
+                    folders = [item.data(Qt.ItemDataRole.UserRole)]
+        self._rescan_folders(folders, label="selected")
+
     def _preload_live_table(self, roots):
         """Fill the Live table from the DB for the selected libraries up front.
 
@@ -914,6 +1044,12 @@ class MainWindow(QMainWindow):
         self._progress_bar.setFormat("Stopped")
         self._stop_btn.setEnabled(False)
         self._worker = None
+        
+        # Release the cross-process scan lock.
+        try:
+            import scanlock; scanlock.release()
+        except Exception:
+            pass
         
         # Clear the per-worker activity panel.
         self._worker_rows_clear()
@@ -1389,6 +1525,12 @@ class MainWindow(QMainWindow):
             self._worker.deleteLater()
             self._worker = None
         
+        # Release the cross-process scan lock.
+        try:
+            import scanlock; scanlock.release()
+        except Exception:
+            pass
+        
         # Clear the per-worker activity panel.
         self._worker_rows_clear()
         
@@ -1821,6 +1963,9 @@ class MainWindow(QMainWindow):
         inspect_action = menu.addAction("🔬 Deep Inspect (ffprobe)")
         inspect_action.triggered.connect(lambda: self._deep_inspect(path))
         
+        rescan_action = menu.addAction("🔁 Re-scan (selected / this file)")
+        rescan_action.triggered.connect(self._rescan_selected)
+        
         menu.addSeparator()
         
         # Get current remediation state
@@ -2122,6 +2267,12 @@ class MainWindow(QMainWindow):
         # regardless of which code path we came through. Targets only our tracked
         # PIDs, so parallel encodes from other apps are left running.
         self._kill_ffmpeg_processes()
+
+        # Release the cross-process scan lock on exit.
+        try:
+            import scanlock; scanlock.release()
+        except Exception:
+            pass
 
         # Close database connection
         if self._db_conn:

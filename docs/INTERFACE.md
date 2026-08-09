@@ -188,6 +188,7 @@ Click any column header to sort. **Row styling:**
 | 📁 **Open Folder** | Opens the folder in Explorer |
 | 📄 **Show ffmpeg Log** | The scan's error output, with the triage diagnosis |
 | 🔬 **Deep Inspect (ffprobe)** | Fast diagnosis: truncated (fixable) vs container damage (bad source) vs ambiguous. See below. |
+| 🔁 **Re-scan (selected / this file)** | Force a fresh decode of the checked rows (or the row under the cursor). Runs inside the app — no CLI needed. |
 | ➕ **Queue for Remediation** | Add a CORRUPT file to the queue |
 | ➖ **Remove from Queue** | Un-queue (back to NONE) |
 | 🚫 **Mark as Skipped** | Leave this file alone |
@@ -219,6 +220,7 @@ Click any column header to sort. **Row styling:**
 | Button | What it does |
 |--------|--------------|
 | **Select All / Select None** | Toggle the checkboxes on visible rows |
+| **Re-scan TIMEOUTs** | Force a fresh decode of every TIMEOUT file. Most TIMEOUTs are transient NAS I/O stalls and come back CLEAN. |
 | **Queue for Remediation** | Mark the checked rows QUEUED |
 | **Delete + Re-search** | Run remediation on all QUEUED files (delete from disk → Radarr unmonitor → delete record → monitor → search). Asks to confirm. |
 | **Open Folder** | Open the selected row's folder |
