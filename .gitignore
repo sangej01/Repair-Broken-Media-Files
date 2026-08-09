@@ -31,3 +31,7 @@ logs/
 *.swp
 Thumbs.db
 Desktop.ini
+
+# Runtime scan lock (never commit)
+*.scanlock
+repair.db.scanlock

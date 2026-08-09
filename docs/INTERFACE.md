@@ -18,6 +18,7 @@ tasks see [WORKFLOW.md](WORKFLOW.md); for full reference and CLI see
 │  Library: ☑ A-H ☑ I-S ☑ T-Z   Parallel scans:[2▾]  Timeout/file:[30 min▾]   │
 │                                              [Start Scan]  [Stop]             │
 ├────────────────────────────────────────────────────────────────────────────┤
+│  Library:  [████░░░░░░░░░░░░░░░░░] A-H: 240 / 1180 scanned (20%) · 940 left   │
 │  ⏱ Scanning 2 file(s)…       [███████░░░░░░░] 45/247 (18%)                    │
 │  ⏱ The Accidental Tourist (1988)  [4.2G] — 3m 21s                            │
 │  ⏱ Naked (1993)                   [7.3G] — 1m 05s                            │
@@ -111,6 +112,15 @@ displays it. Starting a scan automatically switches you to Live mode.
 | **Timeout/file** | Per-file ffmpeg time budget (30 min … No limit). Raise it for large 4K files over a slow network. A hit here yields TIMEOUT (not CORRUPT). |
 | **Start Scan** | Begins scanning. Switches to Live mode and pre-loads the selected libraries so you see rows immediately. |
 | **Stop** | Cancels the running scan (also **Esc**). |
+
+### Library coverage bar
+
+Above the session progress bar, the **Library** bar shows overall coverage of the
+**currently-selected libraries** — folders with a verdict vs. folders on disk —
+e.g. `A-H: 240 / 1180 scanned (20%) · 940 left`. It persists across sessions and
+reflects only the libraries you have checked, so it answers "how far through the
+whole thing am I" (a full library scan can take days). The session bar below it
+shows just the current run.
 
 Folders scanned within the last 7 days with a definitive result are **skipped** on a
 resumed scan (they already have an answer). Use the CLI `scan --rescan` to force a

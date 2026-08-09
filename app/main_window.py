@@ -193,14 +193,17 @@ class MainWindow(QMainWindow):
         scan_row.addWidget(QLabel("Library:"))
         self._lib_ah = QCheckBox("A-H")
         self._lib_ah.setChecked(True)
+        self._lib_ah.toggled.connect(self._update_coverage)
         scan_row.addWidget(self._lib_ah)
         
         self._lib_is = QCheckBox("I-S")
         self._lib_is.setChecked(True)
+        self._lib_is.toggled.connect(self._update_coverage)
         scan_row.addWidget(self._lib_is)
         
         self._lib_tz = QCheckBox("T-Z")
         self._lib_tz.setChecked(True)
+        self._lib_tz.toggled.connect(self._update_coverage)
         scan_row.addWidget(self._lib_tz)
         
         scan_row.addSpacing(16)
@@ -240,7 +243,26 @@ class MainWindow(QMainWindow):
         
         layout.addLayout(scan_row)
         
-        # --- Progress row ---
+        # --- Overall library coverage row (persists across sessions) ---
+        coverage_row = QHBoxLayout()
+        coverage_row.setSpacing(8)
+        cov_lbl = QLabel("Library:")
+        cov_lbl.setObjectName("statusLabel")
+        coverage_row.addWidget(cov_lbl)
+        self._coverage_bar = QProgressBar()
+        self._coverage_bar.setRange(0, 100)
+        self._coverage_bar.setValue(0)
+        self._coverage_bar.setTextVisible(True)
+        self._coverage_bar.setFixedHeight(18)
+        self._coverage_bar.setToolTip(
+            "Overall scan coverage of your whole library (folders with a result "
+            "vs. folders on disk). Persists across sessions — this is the big "
+            "picture, not just the current run."
+        )
+        coverage_row.addWidget(self._coverage_bar, 1)
+        layout.addLayout(coverage_row)
+        
+        # --- Session progress row (current run) ---
         progress_row = QHBoxLayout()
         progress_row.setSpacing(8)
         
@@ -506,6 +528,8 @@ class MainWindow(QMainWindow):
         self._refresh_table()
         # Load the persisted scan-activity feed (answers "what happened last run").
         self._reload_activity_log()
+        # Show overall library coverage for the selected libraries.
+        self._update_coverage()
     
     def _refresh_table(self):
         """Refresh table from database, respecting view mode and filters."""
@@ -590,6 +614,78 @@ class MainWindow(QMainWindow):
         
         self._status_label.setText(", ".join(status_parts))
     
+    def _selected_roots(self):
+        """Return (roots, label) for the currently-checked libraries.
+
+        Falls back to all libraries when none are checked (e.g. Database view).
+        """
+        default_roots = config.get_library_roots()
+        picks = []
+        labels = []
+        checks = [
+            (self._lib_ah, "A-H", 0),
+            (self._lib_is, "I-S", 1),
+            (self._lib_tz, "T-Z", 2),
+        ]
+        for cb, name, idx in checks:
+            if cb.isChecked() and len(default_roots) > idx:
+                picks.append(default_roots[idx])
+                labels.append(name)
+        if not picks:
+            picks = list(default_roots)
+            labels = ["A-H", "I-S", "T-Z"][:len(default_roots)]
+        return picks, "+".join(labels) if labels else "Library"
+
+    def _update_coverage(self):
+        """Update the overall library-coverage bar for the SELECTED libraries.
+
+        Denominator = folders on disk under the checked roots. Numerator =
+        folders under those roots that already have a definitive verdict
+        (CLEAN/CORRUPT/EMPTY/MISSING). Directory counting is cached so it isn't
+        re-walked on every folder completion.
+        """
+        if not self._db_conn:
+            return
+        roots, label = self._selected_roots()
+        root_strs = [str(r) for r in roots]
+
+        # Cache the on-disk folder count per root-set (walking dirs is cheap but
+        # not free; recompute only when the selection changes).
+        cache_key = "|".join(sorted(root_strs))
+        if getattr(self, "_coverage_cache_key", None) != cache_key:
+            total = 0
+            for r in roots:
+                try:
+                    total += sum(1 for p in Path(r).iterdir() if p.is_dir())
+                except Exception:
+                    pass
+            self._coverage_cache_key = cache_key
+            self._coverage_total = total
+        total = getattr(self, "_coverage_total", 0)
+
+        definitive = {"CLEAN", "CORRUPT", "EMPTY", "MISSING"}
+        scanned = 0
+        try:
+            for f in db.get_files(self._db_conn):
+                fp = f.get("folder_path") or ""
+                if f.get("scan_state") in definitive and any(fp.startswith(rs) for rs in root_strs):
+                    scanned += 1
+        except Exception:
+            pass
+
+        if total > 0:
+            pct = int(min(100, scanned * 100 / total))
+            remaining = max(0, total - scanned)
+            self._coverage_bar.setRange(0, 100)
+            self._coverage_bar.setValue(pct)
+            self._coverage_bar.setFormat(
+                f"{label}: {scanned} / {total} scanned ({pct}%) · {remaining} left"
+            )
+        else:
+            self._coverage_bar.setRange(0, 100)
+            self._coverage_bar.setValue(0)
+            self._coverage_bar.setFormat(f"{label}: no folders found")
+
     def _add_file_row(self, file_dict: dict):
         """Add a file row to the table."""
         row = self._table.rowCount()
@@ -1242,6 +1338,9 @@ class MainWindow(QMainWindow):
         # we just reflect it in the UI immediately).
         self._append_activity_event({"at": None, "folder_path": folder_path, "scan_state": state})
         self._update_activity_count()
+
+        # Advance the overall library-coverage bar as each folder gets a verdict.
+        self._update_coverage()
 
         # In live mode, update just the existing row in place (don't refresh whole table)
         if self._view_mode == "live":
