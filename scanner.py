@@ -1482,6 +1482,14 @@ def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional
                 try:
                     db.upsert_file_record(db_conn, result)
                     db.release_scan_claim(db_conn, result["folder_path"])
+                    # Append to the persistent scan-activity log (append-only feed).
+                    db.record_scan_event(
+                        db_conn,
+                        result["folder_path"],
+                        result["scan_state"],
+                        result.get("last_scan_secs"),
+                        result.get("stderr_tail"),
+                    )
                 except Exception as exc:
                     # If DB write fails, log but keep going
                     print(f"[scanner] DB update failed for {result['folder_path']}: {exc}", flush=True)

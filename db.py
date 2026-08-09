@@ -123,6 +123,16 @@ CREATE TABLE IF NOT EXISTS runs (
     args_json      TEXT,
     notes          TEXT
 );
+CREATE TABLE IF NOT EXISTS scan_events (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    at           TEXT    NOT NULL,
+    folder_path  TEXT    NOT NULL,
+    scan_state   TEXT    NOT NULL,
+    elapsed_secs REAL,
+    reason       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_scan_events_at    ON scan_events(at);
+CREATE INDEX IF NOT EXISTS idx_scan_events_state ON scan_events(scan_state);
 """
 
 
@@ -190,6 +200,16 @@ CREATE TABLE IF NOT EXISTS repair_runs (
     notes          TEXT,
     worker_id      TEXT
 );
+CREATE TABLE IF NOT EXISTS repair_scan_events (
+    id           SERIAL PRIMARY KEY,
+    at           TIMESTAMPTZ NOT NULL,
+    folder_path  TEXT    NOT NULL,
+    scan_state   TEXT    NOT NULL,
+    elapsed_secs DOUBLE PRECISION,
+    reason       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_repair_scan_events_at    ON repair_scan_events(at);
+CREATE INDEX IF NOT EXISTS idx_repair_scan_events_state ON repair_scan_events(scan_state);
 """
 
 
@@ -268,6 +288,10 @@ def _files_table(conn: RepairDBConnection) -> str:
 
 def _runs_table(conn: RepairDBConnection) -> str:
     return "repair_runs" if conn.backend == "postgres" else "runs"
+
+
+def _events_table(conn: RepairDBConnection) -> str:
+    return "repair_scan_events" if conn.backend == "postgres" else "scan_events"
 
 
 def _ph(conn: RepairDBConnection) -> str:
@@ -479,6 +503,41 @@ def record_run_finish(conn: RepairDBConnection, run_id: int, stats: Dict[str, An
         run_id,
     )
     _execute(conn, sql, params)
+
+
+# =============================================================================
+#  Scan activity log (append-only feed of per-file results)
+# =============================================================================
+
+def record_scan_event(conn: RepairDBConnection, folder_path: str, scan_state: str,
+                      elapsed_secs: float = None, reason: str = None):
+    """Append one scan-result event to the activity log. Best-effort."""
+    table = _events_table(conn)
+    ph = _ph(conn)
+    now = datetime.utcnow().isoformat() + "Z"
+    sql = (
+        f"INSERT INTO {table} (at, folder_path, scan_state, elapsed_secs, reason) "
+        f"VALUES ({ph}, {ph}, {ph}, {ph}, {ph})"
+    )
+    _execute(conn, sql, (now, folder_path, scan_state, elapsed_secs, reason))
+
+
+def get_scan_events(conn: RepairDBConnection, limit: int = 500,
+                    problems_only: bool = False) -> List[Dict[str, Any]]:
+    """Return recent scan events, newest first.
+
+    problems_only restricts to non-CLEAN verdicts (CORRUPT/TIMEOUT/ERROR/etc.).
+    """
+    table = _events_table(conn)
+    ph = _ph(conn)
+    where = ""
+    params: tuple = ()
+    if problems_only:
+        where = "WHERE scan_state <> 'CLEAN'"
+    sql = f"SELECT * FROM {table} {where} ORDER BY id DESC LIMIT {ph}"
+    params = (limit,)
+    rows = _fetchall(conn, sql, params)
+    return [_row_to_dict(r, conn) for r in rows]
 
 
 # =============================================================================

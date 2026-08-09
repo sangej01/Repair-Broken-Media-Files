@@ -148,6 +148,20 @@ those only run when you request them from the right-click menu.)
 
 ---
 
+## Scan Activity log
+
+Below the table is a **Scan Activity** panel — an append-only feed of every scan
+result as it happens, **persisted to the database** so it survives restarts. This
+is how you see what a scan accomplished (e.g. overnight) without watching it live.
+
+- Each line: `HH:MM:SS  <icon> STATE  Movie Name`, color-coded by verdict.
+- Newest results appear at the top; the feed accumulates across runs.
+- **Only problems** checkbox — hide CLEAN results, showing just
+  CORRUPT/TIMEOUT/ERROR/etc.
+- The count label shows `N events · M problems`.
+- **Clear Log** wipes the activity feed only — it does **not** touch scan results.
+- Uncheck the **Scan Activity** title to collapse the panel.
+
 ## The table
 
 | Column | Meaning |

@@ -9,10 +9,13 @@ from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -380,6 +383,49 @@ class MainWindow(QMainWindow):
         
         layout.addWidget(self._table, 1)
         
+        # --- Scan Activity log (persistent, append-only feed) ---
+        self._activity_box = QGroupBox("Scan Activity")
+        self._activity_box.setCheckable(True)
+        self._activity_box.setChecked(True)  # expanded by default
+        self._activity_box.setToolTip(
+            "Every scan result as it happens, accumulated across runs (persisted "
+            "to the database). Uncheck the title to collapse."
+        )
+        act_layout = QVBoxLayout(self._activity_box)
+        act_layout.setContentsMargins(8, 4, 8, 8)
+        act_layout.setSpacing(4)
+
+        act_controls = QHBoxLayout()
+        self._activity_problems_only = QCheckBox("Only problems")
+        self._activity_problems_only.setToolTip(
+            "Show only non-CLEAN results (CORRUPT / TIMEOUT / ERROR / etc.)."
+        )
+        self._activity_problems_only.toggled.connect(self._reload_activity_log)
+        act_controls.addWidget(self._activity_problems_only)
+        act_controls.addStretch()
+        self._activity_count = QLabel("")
+        self._activity_count.setObjectName("statusLabel")
+        act_controls.addWidget(self._activity_count)
+        clear_btn = QPushButton("Clear Log")
+        clear_btn.setToolTip("Delete all recorded scan-activity events (does not touch scan results).")
+        clear_btn.clicked.connect(self._clear_activity_log)
+        act_controls.addWidget(clear_btn)
+        act_layout.addLayout(act_controls)
+
+        self._activity_list = QListWidget()
+        self._activity_list.setMaximumHeight(160)
+        self._activity_list.setAlternatingRowColors(True)
+        act_layout.addWidget(self._activity_list)
+
+        # Collapse/expand: hide the inner widgets when unchecked.
+        self._activity_box.toggled.connect(
+            lambda on: [self._activity_list.setVisible(on),
+                        self._activity_problems_only.setVisible(on),
+                        self._activity_count.setVisible(on),
+                        clear_btn.setVisible(on)]
+        )
+        layout.addWidget(self._activity_box)
+        
         # --- Bottom status bar ---
         status_row = QHBoxLayout()
         status_row.setSpacing(8)
@@ -450,6 +496,8 @@ class MainWindow(QMainWindow):
         # Start in database view mode - show all existing results
         self._view_mode = "database"
         self._refresh_table()
+        # Load the persisted scan-activity feed (answers "what happened last run").
+        self._reload_activity_log()
     
     def _refresh_table(self):
         """Refresh table from database, respecting view mode and filters."""
@@ -1054,6 +1102,11 @@ class MainWindow(QMainWindow):
         self._progress_bar.setValue(current)
         self._progress_bar.setFormat(f"{current}/{total} ({100*current//total if total > 0 else 0}%)")
         
+        # Append to the live Scan Activity feed (persisted by the scanner; here
+        # we just reflect it in the UI immediately).
+        self._append_activity_event({"at": None, "folder_path": folder_path, "scan_state": state})
+        self._update_activity_count()
+
         # In live mode, update just the existing row in place (don't refresh whole table)
         if self._view_mode == "live":
             self._update_row_state(folder_path, state)
@@ -1150,6 +1203,86 @@ class MainWindow(QMainWindow):
             self._worker_panel.removeWidget(rec["container"])
             rec["container"].deleteLater()
         self._worker_rows.clear()
+
+    # ------------------------------------------------------------------
+    #  Scan Activity log
+    # ------------------------------------------------------------------
+    def _activity_line(self, ev: dict) -> str:
+        """Format one activity event as a single display line."""
+        at = ev.get("at") or ""
+        # Show HH:MM:SS from the ISO timestamp; fall back to now for live events.
+        ts = ""
+        if isinstance(at, str) and "T" in at:
+            ts = at.split("T", 1)[1][:8]
+        elif at:
+            ts = str(at)[-8:]
+        else:
+            from datetime import datetime as _dt
+            ts = _dt.now().strftime("%H:%M:%S")
+        state = ev.get("scan_state", "?")
+        name = Path(ev.get("folder_path", "")).name
+        icon = {
+            "CLEAN": "✓", "CORRUPT": "⚠", "TIMEOUT": "⏱",
+            "ERROR": "✗", "EMPTY": "○", "MISSING": "?",
+        }.get(state, "•")
+        return f"{ts}  {icon} {state:8} {name}"
+
+    def _activity_color(self, state: str) -> QColor:
+        return QColor(STATE_COLORS.get(state, "#cdd6f4"))
+
+    def _append_activity_event(self, ev: dict, at_top: bool = True):
+        """Add one event line to the activity list (respecting the filter)."""
+        if self._activity_problems_only.isChecked() and ev.get("scan_state") == "CLEAN":
+            return
+        item = QListWidgetItem(self._activity_line(ev))
+        item.setForeground(self._activity_color(ev.get("scan_state", "")))
+        if at_top:
+            self._activity_list.insertItem(0, item)
+        else:
+            self._activity_list.addItem(item)
+        # Cap the on-screen list so it never grows unbounded.
+        while self._activity_list.count() > 1000:
+            self._activity_list.takeItem(self._activity_list.count() - 1)
+
+    def _reload_activity_log(self):
+        """Reload the activity list from the database (newest first)."""
+        if not self._db_conn:
+            return
+        self._activity_list.clear()
+        try:
+            problems = self._activity_problems_only.isChecked()
+            events = db.get_scan_events(self._db_conn, limit=500, problems_only=problems)
+        except Exception:
+            events = []
+        # get_scan_events returns newest-first; add in that order (top = newest).
+        for ev in events:
+            self._append_activity_event(ev, at_top=False)
+        self._update_activity_count()
+
+    def _update_activity_count(self):
+        try:
+            total = len(db.get_scan_events(self._db_conn, limit=100000))
+            probs = len(db.get_scan_events(self._db_conn, limit=100000, problems_only=True))
+        except Exception:
+            total, probs = 0, 0
+        self._activity_count.setText(f"{total} events · {probs} problems")
+
+    def _clear_activity_log(self):
+        reply = QMessageBox.question(
+            self, "Clear Scan Activity Log",
+            "Delete all recorded scan-activity events?\n\n"
+            "This only clears the activity feed — your scan results (CLEAN/CORRUPT/…) "
+            "are not affected.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            table = db._events_table(self._db_conn)
+            db._execute(self._db_conn, f"DELETE FROM {table}")
+        except Exception:
+            pass
+        self._reload_activity_log()
 
     def _set_header_tooltip(self, col: int, text: str):
         """Attach a tooltip to a horizontal header section."""
