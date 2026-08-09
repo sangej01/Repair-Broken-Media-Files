@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 # Single source of truth for the app version. Bump this whenever a feature is
 # added; it is shown in the window title and the CLI banner so you can always
 # tell which build is running.
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.4.1"
 
 if getattr(sys, "frozen", False):
     SCRIPT_DIR = Path(sys.executable).parent

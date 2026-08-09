@@ -880,19 +880,16 @@ class MainWindow(QMainWindow):
             self._timeout_combo.setEnabled(True)
     
     def _kill_ffmpeg_processes(self):
-        """Kill any ffmpeg processes that may be orphaned."""
+        """Kill ONLY the ffmpeg processes this app started.
+
+        Uses the scanner's tracked-PID registry, so it targets our own
+        null-decode / inspect / full-decode ffmpeg and never touches unrelated
+        ffmpeg (e.g. the Movie Library Compressor's encodes running in parallel).
+        """
         try:
-            # Use PowerShell to safely kill ffmpeg processes
-            # More reliable than taskkill and won't crash the app
-            cmd = 'Get-Process ffmpeg -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue'
-            subprocess.run(
-                ["powershell", "-NoProfile", "-Command", cmd],
-                capture_output=True,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-                timeout=3
-            )
-        except:
-            # If PowerShell fails, silently continue - not critical
+            scanner._kill_all_active_processes()
+        except Exception:
+            # Non-critical; the OS reaps our children when the process exits.
             pass
     
     @Slot(int)
@@ -1987,6 +1984,11 @@ class MainWindow(QMainWindow):
             self._fulldecode_worker.cancel()
             self._fulldecode_worker.wait(2000)
             self._kill_ffmpeg_processes()
+
+        # Final safety net: always kill any ffmpeg WE started that's still alive,
+        # regardless of which code path we came through. Targets only our tracked
+        # PIDs, so parallel encodes from other apps are left running.
+        self._kill_ffmpeg_processes()
 
         # Close database connection
         if self._db_conn:

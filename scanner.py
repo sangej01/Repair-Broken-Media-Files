@@ -1,4 +1,5 @@
 """Video file scanner - null-decode corruption detection."""
+import atexit
 import os
 import subprocess
 import sys
@@ -31,7 +32,11 @@ def _unregister_process(proc):
 
 
 def _kill_all_active_processes():
-    """Kill all tracked ffmpeg processes immediately."""
+    """Kill all tracked ffmpeg processes immediately.
+
+    Only affects ffmpeg WE launched (registered via _register_process), so it
+    never disturbs unrelated ffmpeg (e.g. a parallel compressor encode).
+    """
     with _active_processes_lock:
         procs_to_kill = list(_active_processes)
         _active_processes.clear()
@@ -57,6 +62,11 @@ def _kill_all_active_processes():
                 )
             except:
                 pass
+
+
+# Safety net: on a clean interpreter exit, kill any ffmpeg WE still have tracked
+# so they never orphan. Only affects our own PIDs (not the compressor's encodes).
+atexit.register(_kill_all_active_processes)
 
 
 # Lifted from library_corruption_sweep.py and Pluck Movies pipeline/common.py
