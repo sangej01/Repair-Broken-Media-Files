@@ -866,6 +866,17 @@ Database: `repair.db` (can be queried with any SQLite client)
 
 ## Version History
 
+The running version appears in the window title/subtitle and via
+`python main.py version` (source: `APP_VERSION` in `config.py`).
+
+**v1.2.0** (2026-08-08)
+- Incremental live scan (table pre-loads; no longer blank mid-scan)
+- Per-worker activity panel (one live timer per concurrently-scanning file)
+- Hide Skipped toggle (Remediation = SKIPPED)
+- Status/Remediation tooltips + new INTERFACE.md
+- `rescan-corrupt` CLI; benign muxer-DTS false-positive fix; remediated-row styling
+- App version shown in UI and CLI
+
 **v1.1** (2026-08-08)
 - Corruption diagnostics: Deep Inspect (ffprobe + header/tail decode) and Full Deep
   Decode (whole-file error map with severity verdict)

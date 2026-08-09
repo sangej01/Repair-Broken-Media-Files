@@ -2,7 +2,7 @@
 
 Scan your movie library for structurally corrupted files and remediate them automatically via Radarr.
 
-![Version](https://img.shields.io/badge/version-1.1-blue)
+![Version](https://img.shields.io/badge/version-1.2.0-blue)
 ![Python](https://img.shields.io/badge/python-3.11+-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -342,6 +342,20 @@ Ensure folder name matches: `Movie Title (YYYY)`
 ---
 
 ## Version History
+
+The running version is shown in the window title/subtitle and via `python main.py version`.
+The single source of truth is `APP_VERSION` in `config.py`.
+
+**v1.2.0** (2026-08-08)
+- **Incremental live scan** — the table pre-loads the selected libraries so it's
+  no longer blank during a scan; rows update in place
+- **Per-worker activity panel** — one live timer line per concurrently-scanning file
+- **Hide Skipped** toggle (hides rows whose Remediation is SKIPPED)
+- **Status/Remediation clarity** — header + filter tooltips, and a new INTERFACE.md
+- **`rescan-corrupt` CLI** to refresh stale verdicts
+- Fixed benign muxer-DTS false positives in both the scan and full decode
+- Grayed-out/italic styling for remediated rows
+- App version now shown in the UI and CLI
 
 **v1.1** (2026-08-08)
 - **Corruption diagnostics:** Deep Inspect (ffprobe + header/tail decode) and Full

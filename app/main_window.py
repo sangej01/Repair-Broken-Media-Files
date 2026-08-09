@@ -116,7 +116,7 @@ class MainWindow(QMainWindow):
     
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Repair Broken Media Files")
+        self.setWindowTitle(f"Repair Broken Media Files  v{config.APP_VERSION}")
         self.setMinimumSize(1200, 800)
         self.resize(1400, 900)
         
@@ -152,7 +152,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(heading)
         
         subtitle = QLabel(
-            "Scan your movie library for structurally broken files and remediate them"
+            f"Scan your movie library for structurally broken files and remediate them"
+            f"   ·   v{config.APP_VERSION}"
         )
         subtitle.setObjectName("subheading")
         subtitle.setWordWrap(True)

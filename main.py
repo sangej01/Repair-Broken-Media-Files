@@ -649,6 +649,9 @@ def main():
     else:
         # CLI subcommands
         cmd = sys.argv[1]
+        if cmd in ("--version", "-V", "version"):
+            print(f"Repair Broken Media Files v{config.APP_VERSION}")
+            return
         if cmd == "scan":
             cli_scan(sys.argv[2:])
         elif cmd == "rescan-corrupt":
@@ -663,7 +666,7 @@ def main():
             cli_benchmark(sys.argv[2:])
         else:
             print(f"Unknown command: {cmd}")
-            print("Usage: repair [scan|rescan-corrupt|list|queue|remediate|benchmark]")
+            print("Usage: repair [scan|rescan-corrupt|list|queue|remediate|benchmark|version]")
             print("       repair    (no args to launch GUI)")
             sys.exit(1)
 
