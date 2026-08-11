@@ -1,8 +1,8 @@
 # Interface Guide: Repair Broken Media Files
 
-A tour of the application window — what every control does. For step-by-step
-tasks see [WORKFLOW.md](WORKFLOW.md); for full reference and CLI see
-[USERGUIDE.md](USERGUIDE.md).
+A tour of the application window — what every control does. For scenarios and flow
+diagrams see [MANUAL.md](MANUAL.md); for step-by-step tasks see
+[WORKFLOW.md](WORKFLOW.md); for full reference and CLI see [USERGUIDE.md](USERGUIDE.md).
 
 ---
 

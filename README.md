@@ -217,6 +217,7 @@ bytes, so use Deep Inspect on those instead of a blind re-scan.
 
 ## Documentation
 
+- **[MANUAL.md](docs/MANUAL.md)** - Full user manual: paths through the app, common scenarios, and flow diagrams
 - **[INTERFACE.md](docs/INTERFACE.md)** - Tour of the window: every control explained, and the Status-vs-Remediation distinction
 - **[USERGUIDE.md](docs/USERGUIDE.md)** - Complete usage guide (step-by-step workflows, CLI commands, troubleshooting)
 - **[WORKFLOW.md](docs/WORKFLOW.md)** - Task-oriented walkthrough with examples
