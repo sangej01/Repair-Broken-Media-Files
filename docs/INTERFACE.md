@@ -229,14 +229,45 @@ Click any column header to sort. **Row styling:**
 
 | Button | What it does |
 |--------|--------------|
-| **Select All / Select None** | Toggle the checkboxes on visible rows |
+| **Select All / Select None** | Toggle the checkboxes on visible (displayed) rows |
 | **Re-scan TIMEOUTs** | Force a fresh decode of every TIMEOUT file. Most TIMEOUTs are transient NAS I/O stalls and come back CLEAN. |
-| **Queue for Remediation** | Mark the checked rows QUEUED |
+| **Backup DB** | Save a timestamped snapshot of the database to the backup folder (also runs automatically on exit). |
+| **Check Re-downloads** | Ask Radarr which RESEARCHING movies have finished (imported), which are downloading, and which are pending — so you know what's ready to re-scan without opening Radarr. |
+| **Queue for Remediation** | Mark the checked (displayed) rows QUEUED |
 | **Delete + Re-search** | Run remediation on all QUEUED files (delete from disk → Radarr unmonitor → delete record → monitor → search). Asks to confirm. |
 | **Open Folder** | Open the selected row's folder |
 | **Show ffmpeg Log** | Show the selected row's scan output |
 
 ---
+
+## Tracking re-downloads (after Delete + Re-search)
+
+Delete + Re-search deletes the corrupt file and tells Radarr to grab a fresh copy;
+those rows show Remediation = **RESEARCHING**. To find out when the new copies have
+actually arrived — **without opening Radarr** — click **Check Re-downloads**. It
+reports each RESEARCHING movie as:
+
+- **Imported** — Radarr has a fresh file on disk → re-scan it to confirm CLEAN.
+- **Downloading** — currently in Radarr's queue.
+- **Pending** — still searching / nothing grabbed yet.
+- **Not found in Radarr** — the movie isn't a Radarr-managed title, so it needs
+  manual handling (e.g. a director's/final cut that shares its TMDB entry with the
+  main film).
+
+Then right-click the **Imported** ones → **Re-scan** to flip CORRUPT → CLEAN.
+
+## Database backups
+
+The SQLite database (all your scan results, remediation state, activity log, and
+the mtime fingerprints that keep resumed scans fast) is the one irreplaceable file.
+It is backed up as a timestamped copy to the backup folder (default:
+`Z:\Repair Media File Deploy\db-backups\`, override with `REPAIR_DB_BACKUP_DIR`):
+
+- **Automatically on exit.**
+- **On demand** via the **Backup DB** button.
+
+The newest ~30 copies are kept; older ones are pruned. Backups use SQLite's online
+`.backup`, so they're consistent snapshots.
 
 ## Keyboard shortcuts
 

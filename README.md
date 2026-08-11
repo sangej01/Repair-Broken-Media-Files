@@ -2,7 +2,7 @@
 
 Scan your movie library for structurally corrupted files and remediate them automatically via Radarr.
 
-![Version](https://img.shields.io/badge/version-1.2.0-blue)
+![Version](https://img.shields.io/badge/version-1.8.0-blue)
 ![Python](https://img.shields.io/badge/python-3.11+-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -345,6 +345,26 @@ Ensure folder name matches: `Movie Title (YYYY)`
 
 The running version is shown in the window title/subtitle and via `python main.py version`.
 The single source of truth is `APP_VERSION` in `config.py`.
+
+**v1.8.0** (2026-08-11)
+- **Check Re-downloads** — query Radarr in-app for RESEARCHING movies (imported /
+  downloading / pending / not-in-radarr), so you know what's ready to re-scan
+  without opening Radarr. "Imported" means a file arrived, not that it's healthy —
+  re-scan to confirm CLEAN.
+- **Database backups** — timestamped SQLite `.backup` to the deploy share
+  (`Z:\Repair Media File Deploy\db-backups\`) automatically on exit and via a
+  **Backup DB** button; keeps the newest ~30.
+- **Frozen-exe DB fix** — the packaged exe now uses the correct database
+  (`SCRIPT_DIR`/`REPAIR_DB_PATH`) instead of a throwaway temp copy; launcher points
+  at the canonical source `repair.db`.
+- **Duration-aware scan timeout + stall detection** — long low-bitrate movies no
+  longer false-TIMEOUT; hung reads are caught in ~5 min with a "stalled near X" note.
+- **Selection actions** (Select All / Queue / Re-scan) act only on displayed +
+  checked rows.
+- **Concurrency guard** — a scan lock prevents the CLI and GUI from writing the DB
+  at once (which could hang/crash the app).
+- **Library coverage bar**, **persistent Scan Activity log**, **Hide Skipped**,
+  **per-file % progress bars**, **rescan-corrupt CLI**, and hardened `build.ps1`.
 
 **v1.2.0** (2026-08-08)
 - **Incremental live scan** — the table pre-loads the selected libraries so it's
