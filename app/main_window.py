@@ -1085,34 +1085,50 @@ class MainWindow(QMainWindow):
     def _on_redownload_status(self, result: dict):
         self._check_redl_btn.setEnabled(True)
         self._progress_label.setText("Radarr status check complete")
+        # Each bucket is a list of (name, folder_path) tuples.
         imported = result.get("imported", [])
         downloading = result.get("downloading", [])
         pending = result.get("pending", [])
         not_in = result.get("not_in_radarr", [])
 
+        def names(bucket):
+            return [b[0] if isinstance(b, (list, tuple)) else b for b in bucket]
+
         lines = []
         lines.append(f"✓ Imported (ready to re-scan): {len(imported)}")
-        for n in imported:
+        for n in names(imported):
             lines.append(f"    {n}")
         lines.append("")
         lines.append(f"⬇ Downloading now: {len(downloading)}")
-        for n in downloading:
+        for n in names(downloading):
             lines.append(f"    {n}")
         lines.append("")
         lines.append(f"… Pending (searching / nothing grabbed yet): {len(pending)}")
-        for n in pending:
+        for n in names(pending):
             lines.append(f"    {n}")
         if not_in:
             lines.append("")
             lines.append(f"⚠ Not found in Radarr (manual handling): {len(not_in)}")
-            for n in not_in:
+            for n in names(not_in):
                 lines.append(f"    {n}")
         lines.append("")
         if imported:
-            lines.append("Tip: the Imported ones have a fresh file — re-scan them "
-                         "(select + right-click Re-scan) to confirm CLEAN.")
+            lines.append("Click 'Re-scan Imported' below to verify the fresh copies "
+                         "decode cleanly (Radarr 'imported' only means a file arrived, "
+                         "not that it's good).")
 
-        self._show_text_dialog("Radarr Re-download Status", "\n".join(lines))
+        # Offer a one-click action to re-scan exactly the imported movies, so you
+        # don't have to go back to the table and select them manually.
+        actions = []
+        imported_paths = [b[1] for b in imported if isinstance(b, (list, tuple)) and len(b) > 1]
+        if imported_paths:
+            actions.append((
+                f"Re-scan Imported ({len(imported_paths)})",
+                lambda: self._rescan_folders(imported_paths, label="imported"),
+                True,  # primary button
+            ))
+
+        self._show_text_dialog("Radarr Re-download Status", "\n".join(lines), actions=actions)
 
         if getattr(self, "_radarr_status_worker", None):
             self._radarr_status_worker.deleteLater()

@@ -14,7 +14,9 @@ class RadarrStatusWorker(QThread):
     has nothing yet. Emits a summary so the user doesn't have to open Radarr.
     """
 
-    finished = Signal(dict)   # {"imported":[...], "downloading":[...], "pending":[...], "not_in_radarr":[...], "error":str|None}
+    # Each bucket holds (display_name, folder_path) tuples so the GUI can both
+    # show names and act on the folders (e.g. re-scan the imported ones).
+    finished = Signal(dict)   # {"imported":[(name,path)...], "downloading":[...], "pending":[...], "not_in_radarr":[...]}
     error = Signal(str)
 
     def __init__(self, folder_paths: List[str]):
@@ -35,21 +37,21 @@ class RadarrStatusWorker(QThread):
             queued_movie_ids = {q.get("movieId") for q in queue if q.get("movieId")}
 
             for fp in self.folder_paths:
-                name = Path(fp).name
+                entry = (Path(fp).name, fp)
                 try:
                     movie = radarr.find_movie_by_path(fp)
                 except Exception:
                     movie = None
                 if not movie:
-                    result["not_in_radarr"].append(name)
+                    result["not_in_radarr"].append(entry)
                     continue
                 mid = movie.get("id")
                 if movie.get("hasFile"):
-                    result["imported"].append(name)
+                    result["imported"].append(entry)
                 elif mid in queued_movie_ids:
-                    result["downloading"].append(name)
+                    result["downloading"].append(entry)
                 else:
-                    result["pending"].append(name)
+                    result["pending"].append(entry)
 
             self.finished.emit(result)
         except Exception as e:
