@@ -333,17 +333,31 @@ def null_decode(video_path: Path, timeout_sec: int = 1800, progress_callback=Non
     start = time.time()
     proc = None
     
-    # Adjust timeout based on file size for large files
-    # Rough estimate: 1 minute per GB minimum, with floor of timeout_sec
-    # Skip entirely when timeout_sec == 0 (No limit) — don't accidentally re-enable a timeout.
+    # Adaptive timeout. Skip entirely when timeout_sec == 0 (No limit).
+    # The budget must account for BOTH file size AND runtime: a long, low-bitrate
+    # movie (e.g. a 2-hour HEVC encode that's only ~1.7 GB) needs far more wall
+    # time than its size implies, especially over a slow NAS. Using size alone
+    # caused long films to false-TIMEOUT. Budget = the most generous of:
+    #   - the caller's base timeout
+    #   - 2 min per GB (size-based, for big remuxes)
+    #   - 1.5x the media runtime + 5 min slack (duration-based, for long films)
     if timeout_sec > 0:
         try:
             file_size_gb = video_path.stat().st_size / (1024**3)
-            # Allow 2 minutes per GB for slow NAS, with min of timeout_sec
-            adaptive_timeout = max(timeout_sec, int(file_size_gb * 120))
-            timeout_sec = adaptive_timeout
+            budget = max(timeout_sec, int(file_size_gb * 120))
+            if duration_sec and duration_sec > 0:
+                budget = max(budget, int(duration_sec * 1.5) + 300)
+            timeout_sec = budget
         except Exception:
             pass  # Use default if we can't stat
+    
+    # Stall detection: if the decode position stops advancing for this long, the
+    # decode is genuinely hung (dead NAS read / pathological stream) rather than
+    # slow. Timing out on a stall catches "stuck at 0%" cases fast instead of
+    # burning the whole (now larger) budget.
+    STALL_LIMIT_SEC = 300  # 5 minutes of zero progress = hung
+    last_progress_pos = -1.0
+    last_progress_change = time.time()
     
     # Shared decode-position clock (seconds), updated by a stdout reader thread
     # consuming ffmpeg's machine-readable "-progress pipe:1" output.
@@ -398,17 +412,35 @@ def null_decode(video_path: Path, timeout_sec: int = 1800, progress_callback=Non
                     pass
                 return "CANCELLED", "scan cancelled", time.time() - start
             
-            # Check if we've exceeded timeout
+            # Check if we've exceeded the overall timeout budget
             elapsed = time.time() - start
             if timeout_sec > 0 and elapsed > timeout_sec:
-                # Kill the process properly
                 try:
                     proc.kill()
                     proc.wait(timeout=5)
                 except:
                     pass
                 # Use TIMEOUT state (not ERROR) so users can rescan with longer timeout
-                return "TIMEOUT", f"TIMEOUT after {timeout_sec}s (file may be too large for current timeout)", elapsed
+                return "TIMEOUT", f"TIMEOUT after {timeout_sec}s (decode exceeded time budget)", elapsed
+            
+            # Stall detection: has the decode position advanced recently?
+            now = time.time()
+            if last_pos[0] > last_progress_pos:
+                last_progress_pos = last_pos[0]
+                last_progress_change = now
+            # Only treat as a stall once we've given it a grace period AND the
+            # position never moved (or stopped moving) for STALL_LIMIT_SEC.
+            if timeout_sec != 0 and (now - last_progress_change) > STALL_LIMIT_SEC and elapsed > 30:
+                try:
+                    proc.kill()
+                    proc.wait(timeout=5)
+                except Exception:
+                    pass
+                pos_txt = f"{last_progress_pos:.0f}s" if last_progress_pos > 0 else "the start"
+                return ("TIMEOUT",
+                        f"STALLED: decode made no progress for {STALL_LIMIT_SEC}s "
+                        f"(stuck near {pos_txt}) - likely a hung read or bad stream",
+                        elapsed)
             
             # Emit progress callback with a real fraction when duration is known.
             if progress_callback:
