@@ -488,6 +488,15 @@ class MainWindow(QMainWindow):
         self._backup_btn.clicked.connect(self._backup_db_now)
         action_row.addWidget(self._backup_btn)
         
+        self._check_redl_btn = QPushButton("Check Re-downloads")
+        self._check_redl_btn.setToolTip(
+            "Ask Radarr which RESEARCHING movies have finished re-downloading "
+            "(imported), which are still downloading, and which are pending — "
+            "so you know what's ready to re-scan without opening Radarr."
+        )
+        self._check_redl_btn.clicked.connect(self._check_redownloads)
+        action_row.addWidget(self._check_redl_btn)
+        
         self._queue_btn = QPushButton("Queue for Remediation")
         self._queue_btn.clicked.connect(self._queue_selected)
         action_row.addWidget(self._queue_btn)
@@ -1050,6 +1059,74 @@ class MainWindow(QMainWindow):
                 self, "Backup Not Done",
                 f"Could not back up the database:\n{r.get('error', 'unknown error')}",
             )
+
+    @Slot()
+    def _check_redownloads(self):
+        """Ask Radarr about the status of all RESEARCHING re-downloads."""
+        from app.workers import RadarrStatusWorker
+        researching = [r["folder_path"] for r in db.get_files(self._db_conn)
+                       if r.get("remediation") == "RESEARCHING"]
+        if not researching:
+            QMessageBox.information(self, "No Re-downloads",
+                                    "No movies are currently in RESEARCHING state.")
+            return
+        if getattr(self, "_radarr_status_worker", None) and self._radarr_status_worker.isRunning():
+            QMessageBox.information(self, "Checking", "A Radarr status check is already running.")
+            return
+
+        self._progress_label.setText(f"Checking Radarr for {len(researching)} re-download(s)...")
+        self._check_redl_btn.setEnabled(False)
+        self._radarr_status_worker = RadarrStatusWorker(researching)
+        self._radarr_status_worker.finished.connect(self._on_redownload_status)
+        self._radarr_status_worker.error.connect(self._on_redownload_error)
+        self._radarr_status_worker.start()
+
+    @Slot(dict)
+    def _on_redownload_status(self, result: dict):
+        self._check_redl_btn.setEnabled(True)
+        self._progress_label.setText("Radarr status check complete")
+        imported = result.get("imported", [])
+        downloading = result.get("downloading", [])
+        pending = result.get("pending", [])
+        not_in = result.get("not_in_radarr", [])
+
+        lines = []
+        lines.append(f"✓ Imported (ready to re-scan): {len(imported)}")
+        for n in imported:
+            lines.append(f"    {n}")
+        lines.append("")
+        lines.append(f"⬇ Downloading now: {len(downloading)}")
+        for n in downloading:
+            lines.append(f"    {n}")
+        lines.append("")
+        lines.append(f"… Pending (searching / nothing grabbed yet): {len(pending)}")
+        for n in pending:
+            lines.append(f"    {n}")
+        if not_in:
+            lines.append("")
+            lines.append(f"⚠ Not found in Radarr (manual handling): {len(not_in)}")
+            for n in not_in:
+                lines.append(f"    {n}")
+        lines.append("")
+        if imported:
+            lines.append("Tip: the Imported ones have a fresh file — re-scan them "
+                         "(select + right-click Re-scan) to confirm CLEAN.")
+
+        self._show_text_dialog("Radarr Re-download Status", "\n".join(lines))
+
+        if getattr(self, "_radarr_status_worker", None):
+            self._radarr_status_worker.deleteLater()
+            self._radarr_status_worker = None
+
+    @Slot(str)
+    def _on_redownload_error(self, msg: str):
+        self._check_redl_btn.setEnabled(True)
+        self._progress_label.setText("Radarr status check failed")
+        QMessageBox.warning(self, "Radarr Error",
+                            f"Could not check Radarr status:\n{msg}")
+        if getattr(self, "_radarr_status_worker", None):
+            self._radarr_status_worker.deleteLater()
+            self._radarr_status_worker = None
 
     @Slot()
     def _rescan_timeouts(self):

@@ -1,8 +1,61 @@
 """QThread workers for background tasks."""
 from PySide6.QtCore import QThread, Signal
 from typing import Optional, List
+from pathlib import Path
 import scanner
 import db
+
+
+class RadarrStatusWorker(QThread):
+    """Background worker that checks Radarr re-download status for RESEARCHING files.
+
+    For each folder in RESEARCHING remediation state, asks Radarr whether the
+    movie now has a file (imported), is in the download queue (downloading), or
+    has nothing yet. Emits a summary so the user doesn't have to open Radarr.
+    """
+
+    finished = Signal(dict)   # {"imported":[...], "downloading":[...], "pending":[...], "not_in_radarr":[...], "error":str|None}
+    error = Signal(str)
+
+    def __init__(self, folder_paths: List[str]):
+        super().__init__()
+        self.folder_paths = folder_paths
+
+    def run(self):
+        result = {"imported": [], "downloading": [], "pending": [], "not_in_radarr": [], "error": None}
+        try:
+            from radarr import RadarrClient
+            radarr = RadarrClient()
+
+            # Map movieId -> queued (still downloading)
+            try:
+                queue = radarr.get_queue()
+            except Exception:
+                queue = []
+            queued_movie_ids = {q.get("movieId") for q in queue if q.get("movieId")}
+
+            for fp in self.folder_paths:
+                name = Path(fp).name
+                try:
+                    movie = radarr.find_movie_by_path(fp)
+                except Exception:
+                    movie = None
+                if not movie:
+                    result["not_in_radarr"].append(name)
+                    continue
+                mid = movie.get("id")
+                if movie.get("hasFile"):
+                    result["imported"].append(name)
+                elif mid in queued_movie_ids:
+                    result["downloading"].append(name)
+                else:
+                    result["pending"].append(name)
+
+            self.finished.emit(result)
+        except Exception as e:
+            import traceback
+            print(f"[RadarrStatusWorker] {traceback.format_exc()}", flush=True)
+            self.error.emit(str(e))
 
 
 class ScanWorker(QThread):

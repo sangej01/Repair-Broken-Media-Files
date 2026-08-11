@@ -141,6 +141,34 @@ class RadarrClient:
         except requests.exceptions.RequestException as e:
             raise RuntimeError(f"Failed to trigger search for movie {movie_id}: {e}")
     
+    def get_queue(self) -> List[Dict[str, Any]]:
+        """Return Radarr's current download queue (in-progress grabs).
+
+        Each record includes movieId and size/sizeleft so we can tell which
+        re-downloads are actively downloading vs. done.
+        """
+        records = []
+        try:
+            page = 1
+            while True:
+                resp = requests.get(
+                    f"{self.url}/api/v3/queue",
+                    headers=self.headers,
+                    params={"page": page, "pageSize": 100},
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                recs = data.get("records", data if isinstance(data, list) else [])
+                records.extend(recs)
+                total = data.get("totalRecords", len(records)) if isinstance(data, dict) else len(records)
+                if len(records) >= total or not recs:
+                    break
+                page += 1
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f"Failed to fetch Radarr queue: {e}")
+        return records
+    
     def wait_for_command(self, cmd_id: int, timeout: int = 300, interval: int = 2) -> bool:
         """Poll command status until complete. Returns True if successful."""
         max_polls = timeout // interval
