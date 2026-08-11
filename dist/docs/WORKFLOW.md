@@ -71,6 +71,11 @@ Before deleting anything, double-check what's queued:
 
 **Safety check:** If something looks wrong (e.g., a file you think might actually be fine), right-click → **"Mark as Skipped"** to remove it from the queue.
 
+**Not sure a file is really unrecoverable?** Right-click → **"🔬 Deep Inspect
+(ffprobe)"** first. See [Diagnosing Before You Delete](#diagnosing-before-you-delete)
+below — it can tell you whether a re-download will actually help, and offers a
+one-click fix when it will.
+
 ### Step 5: Execute the Delete + Re-search
 
 1. Click the red **"Delete + Re-search"** button (bottom right)
@@ -128,6 +133,46 @@ After Radarr re-acquires the movie:
 
 ---
 
+## Diagnosing Before You Delete
+
+A CORRUPT flag doesn't tell you *why* a file is broken or whether re-acquiring it
+will help. Before deleting, you can diagnose it — right-click a row.
+
+### Deep Inspect (ffprobe) — do this first
+
+Right-click → **🔬 Deep Inspect (ffprobe)**. In a few seconds it reports one of:
+
+- **"Header is fine but the END is damaged — TRUNCATED / INCOMPLETE download"**
+  → a bad download. The dialog shows a **Delete + Re-search (Radarr)** button.
+  Click it to fix in one step.
+- **"Container-level damage — the file structure itself is broken"**
+  → the source release (or a disk write) is bad. Re-downloading the *same* release
+  will probably fail again; find a different one. No one-click button is offered
+  here on purpose.
+- **"Damage is in the un-probed MIDDLE"** (inconclusive)
+  → the dialog offers **Run Full Deep Decode**.
+
+### Full Deep Decode — when Deep Inspect is inconclusive
+
+This decodes the **whole file** (minutes on a big movie), so it only runs after you
+confirm, in the background, with a progress bar and Cancel. It maps where errors
+occur and gives a verdict:
+
+| Verdict | What to do |
+|---------|-----------|
+| **CLEAN** | No errors found — the flag was transient. Re-scan to clear it. |
+| **PLAYABLE** | A brief glitch; the file is watchable. Re-download optional. |
+| **RE-DOWNLOAD** | Localized damage (bad download chunk). Click the offered **Delete + Re-search** button. |
+| **BAD SOURCE** | Errors everywhere — the release is bad. Get a *different* release. |
+
+### Rule of thumb
+
+- **Truncated / RE-DOWNLOAD** → let the tool delete + re-search (one click).
+- **BAD SOURCE / container damage** → don't just re-download the same release; it'll
+  likely come back corrupt. Mark as Skipped or find a different source.
+
+---
+
 ## Recovery Scenarios
 
 ### "I queued the wrong movie!"
@@ -168,12 +213,21 @@ Pluck Movies (VERIFY_LEVEL=3) catches this before import. To remediate again:
 2. Click **"Show ffmpeg Log"** button
 3. OR right-click → **"📄 Show ffmpeg Log"**
 
-You'll see the actual ffmpeg error, e.g.:
+You'll see the actual ffmpeg error, now prefixed with a **triage label** and
+followed by a plain-English diagnosis, e.g.:
 ```
-File ended prematurely at position 1234567890
-[matroska,webm @ 0x...] File ended prematurely
-Error opening output file
+[Incomplete / truncated] File ended prematurely at position 1234567890
+
+── Diagnosis ──
+Type: Incomplete / truncated
+The file is cut short - bytes are missing from the end...
+
+A fresh re-download will LIKELY fix this.
 ```
+
+For a deeper answer (truncated vs. whole-file corruption vs. bad source),
+right-click → **🔬 Deep Inspect (ffprobe)**. See
+[Diagnosing Before You Delete](#diagnosing-before-you-delete).
 
 ### How big are my corrupt files?
 
@@ -340,6 +394,12 @@ python main.py remediate --max 10
 | ⚫ | UNKNOWN | Discovered but not yet scanned (or reset for retry) | Will scan on next run |
 | ⏳ | SCANNING | Scan currently in progress | Wait |
 
+**Tip — the "Problematic" filter:** the Status dropdown has a **Problematic**
+shortcut (above the dotted separator) that shows **TIMEOUT + UNKNOWN + ERROR** at
+once. Those are the three statuses where a re-scan can actually change the result
+(timed out, interrupted, or failed to run). For **CORRUPT**, don't blindly re-scan —
+it's deterministic on the same bytes; use **Deep Inspect** instead.
+
 ### Remediation State
 
 | State | Meaning | What to Do |
@@ -361,8 +421,11 @@ Right-click on any movie row to access:
 | Action | When to Use |
 |--------|-------------|
 | 📁 Open Folder | Inspect file in Explorer |
-| 📄 Show ffmpeg Log | See WHY it's corrupt |
+| 📄 Show ffmpeg Log | See WHY it's corrupt (with triage diagnosis) |
+| 🔬 Deep Inspect (ffprobe) | Diagnose if it's truly unrecoverable or a fixable re-download |
 | ➕ Queue for Remediation | Quick queue (CORRUPT only) |
+| 🚫 Mark as Skipped | Don't remediate this one |
+| 🔍 Verify Folder Exists | Check the folder is still on disk |
 | 📋 Copy Path | Get folder path for scripts/manual ops |
 
 ---

@@ -2,7 +2,7 @@
 
 Scan your movie library for structurally corrupted files and remediate them automatically via Radarr.
 
-![Version](https://img.shields.io/badge/version-1.0-blue)
+![Version](https://img.shields.io/badge/version-1.2.0-blue)
 ![Python](https://img.shields.io/badge/python-3.11+-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -15,6 +15,10 @@ Scan your movie library for structurally corrupted files and remediate them auto
 ### Key Features
 
 - ✅ **Deep Corruption Scan** - ffmpeg null-decode detects mid-file corruption that `ffprobe` misses
+- ✅ **Corruption Diagnostics** - On-demand **Deep Inspect** (ffprobe + header/tail decode) and **Full Deep Decode** (whole-file error map) tell you *whether a file is truly unrecoverable* or just needs a re-download
+- ✅ **Triage Labels** - Each corruption reason is tagged with a plain-English type (e.g. `[Incomplete / truncated]`) and a re-download recommendation
+- ✅ **One-Click Fix** - When a diagnosis says a re-download will fix it, the report offers a **Delete + Re-search (Radarr)** button
+- ✅ **"Problematic" Filter** - One dropdown entry surfaces every file worth re-scanning (TIMEOUT + UNKNOWN + ERROR)
 - ✅ **Live Progress** - See movies appear instantly with real-time scanning timers
 - ✅ **Interactive GUI** - Queue, inspect, and remediate while scanning continues
 - ✅ **CLI Support** - Automate scans via command line
@@ -144,6 +148,55 @@ Re-scan → State: REMEDIATED
 
 ---
 
+## Diagnosing Corrupt Files
+
+Not every CORRUPT file is beyond saving, and not every re-download will help. Two
+on-demand tools (right-click a row) tell you which is which:
+
+### Deep Inspect (ffprobe) — fast
+
+Runs `ffprobe` for container/stream metadata, then a **header-only** decode and a
+**tail** decode. From those it concludes one of:
+
+| Result | Meaning | Offer |
+|--------|---------|-------|
+| **Truncated / incomplete** (header OK, end damaged) | Classic bad download | **Delete + Re-search** button |
+| **Container-level damage** (header fails) | Source release / disk is bad | *(no re-download — a different release is needed)* |
+| **Ambiguous** (header + end both clean) | Damage is mid-file | **Run Full Deep Decode** button |
+
+A determinate progress bar shows the ffprobe → header → tail phases.
+
+### Full Deep Decode — thorough (opt-in)
+
+Offered only when Deep Inspect is inconclusive. Decodes the **entire file** and maps
+exactly where errors occur, then returns a verdict:
+
+| Verdict | Meaning | Action |
+|---------|---------|--------|
+| **CLEAN** | No errors on full decode | Earlier flag was transient — re-scan |
+| **PLAYABLE** | A few errors, localized | Brief glitch; watchable |
+| **RE-DOWNLOAD** | Errors concentrated in a region | Corrupted chunk — same release will likely fix it (**one-click** button) |
+| **BAD SOURCE** | Errors across most of the runtime | Release itself is bad — get a different one |
+
+Because it re-decodes the whole file (minutes on a large movie), it runs in the
+background with a progress bar and Cancel, and only after you confirm.
+
+### Triage labels
+
+Every CORRUPT reason is prefixed with its type, e.g.
+`[Incomplete / truncated] file ended prematurely...`, and hovering the **Reason**
+cell shows the full explanation plus whether a re-download is likely to help.
+
+### The "Problematic" filter
+
+The Status filter includes a **Problematic** shortcut (above a dotted separator)
+that shows every file worth re-examining at once — **TIMEOUT + UNKNOWN + ERROR**.
+These are the states where a re-scan can genuinely change the outcome (a scan that
+timed out, was interrupted, or failed to run). CORRUPT is deterministic on the same
+bytes, so use Deep Inspect on those instead of a blind re-scan.
+
+---
+
 ## Screenshots
 
 ### Main Window
@@ -164,6 +217,7 @@ Re-scan → State: REMEDIATED
 
 ## Documentation
 
+- **[INTERFACE.md](docs/INTERFACE.md)** - Tour of the window: every control explained, and the Status-vs-Remediation distinction
 - **[USERGUIDE.md](docs/USERGUIDE.md)** - Complete usage guide (step-by-step workflows, CLI commands, troubleshooting)
 - **[WORKFLOW.md](docs/WORKFLOW.md)** - Task-oriented walkthrough with examples
 - **[BENCHMARK.md](docs/BENCHMARK.md)** - Find your optimal `--workers` value with the built-in benchmark
@@ -288,6 +342,30 @@ Ensure folder name matches: `Movie Title (YYYY)`
 ---
 
 ## Version History
+
+The running version is shown in the window title/subtitle and via `python main.py version`.
+The single source of truth is `APP_VERSION` in `config.py`.
+
+**v1.2.0** (2026-08-08)
+- **Incremental live scan** — the table pre-loads the selected libraries so it's
+  no longer blank during a scan; rows update in place
+- **Per-worker activity panel** — one live timer line per concurrently-scanning file
+- **Hide Skipped** toggle (hides rows whose Remediation is SKIPPED)
+- **Status/Remediation clarity** — header + filter tooltips, and a new INTERFACE.md
+- **`rescan-corrupt` CLI** to refresh stale verdicts
+- Fixed benign muxer-DTS false positives in both the scan and full decode
+- Grayed-out/italic styling for remediated rows
+- App version now shown in the UI and CLI
+
+**v1.1** (2026-08-08)
+- **Corruption diagnostics:** Deep Inspect (ffprobe + header/tail decode) and Full
+  Deep Decode (whole-file error map with severity verdict)
+- **Triage labels** on every CORRUPT reason, with re-download recommendations
+- **One-click Delete + Re-search** offered directly from a "re-download will fix it"
+  diagnosis
+- **"Problematic" status filter** (TIMEOUT + UNKNOWN + ERROR) for quickly finding
+  files worth re-scanning
+- Progress bars on the inspect/decode dialogs, with Cancel
 
 **v1.0** (2026-06-17)
 - Initial release
