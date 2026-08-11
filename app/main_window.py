@@ -933,9 +933,16 @@ class MainWindow(QMainWindow):
         self._worker.start()
 
     def _checked_folder_paths(self) -> list:
-        """Return folder paths for all checked (visible) rows."""
+        """Return folder paths for rows that are BOTH displayed AND checked.
+
+        Hidden rows (filtered out / Hide Skipped) are never included, so an
+        action can only ever touch movies the user can actually see and has
+        ticked.
+        """
         paths = []
         for row in range(self._table.rowCount()):
+            if self._table.isRowHidden(row):
+                continue
             widget = self._table.cellWidget(row, COL_SELECT)
             if not widget:
                 continue
@@ -1682,17 +1689,8 @@ class MainWindow(QMainWindow):
     
     @Slot()
     def _queue_selected(self):
-        """Queue selected files for remediation."""
-        selected_paths = []
-        for row in range(self._table.rowCount()):
-            widget = self._table.cellWidget(row, COL_SELECT)
-            if widget:
-                checkbox = widget.findChild(QCheckBox)
-                if checkbox and checkbox.isChecked():
-                    folder_item = self._table.item(row, COL_FOLDER)
-                    if folder_item:
-                        path = folder_item.data(Qt.ItemDataRole.UserRole)
-                        selected_paths.append(path)
+        """Queue for remediation only rows that are displayed AND checked."""
+        selected_paths = self._checked_folder_paths()
         
         if not selected_paths:
             QMessageBox.warning(self, "No Selection", "Please select files to queue")
