@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 # Single source of truth for the app version. Bump this whenever a feature is
 # added; it is shown in the window title and the CLI banner so you can always
 # tell which build is running.
-APP_VERSION = "1.7.3"
+APP_VERSION = "1.7.4"
 
 if getattr(sys, "frozen", False):
     SCRIPT_DIR = Path(sys.executable).parent
@@ -37,8 +37,21 @@ EMAIL_APP_PASSWORD = os.getenv("EMAIL_APP_PASSWORD", "")
 # Backend: 'sqlite' (single PC) or 'postgres' (multi-PC shared scanning)
 DB_BACKEND = "sqlite"
 
-# SQLite path (used when DB_BACKEND=sqlite)
-DB_PATH = Path(__file__).parent / "repair.db"
+# SQLite path (used when DB_BACKEND=sqlite).
+# IMPORTANT: base this on SCRIPT_DIR, not __file__. In a PyInstaller exe,
+# __file__ points into the temporary _MEIPASS extraction dir, which is wiped
+# each run — that made the frozen app open a throwaway empty DB instead of the
+# real one next to the exe. SCRIPT_DIR is the exe's own folder when frozen, or
+# the project folder when run from source. An explicit REPAIR_DB_PATH env var
+# overrides everything (e.g. to share one DB).
+DB_PATH = Path(os.getenv("REPAIR_DB_PATH", str(SCRIPT_DIR / "repair.db")))
+
+# Where to back up the SQLite DB (timestamped copies). Defaults to the Z: deploy
+# share so backups live off this machine. Override with REPAIR_DB_BACKUP_DIR, or
+# set it empty to disable auto-backup.
+DB_BACKUP_DIR = os.getenv("REPAIR_DB_BACKUP_DIR", r"Z:\Repair Media File Deploy\db-backups")
+# How many timestamped backups to keep (older ones are pruned).
+DB_BACKUP_KEEP = int(os.getenv("REPAIR_DB_BACKUP_KEEP", "30"))
 
 # PostgreSQL connection string (used when DB_BACKEND=postgres)
 # Set DATABASE_URL in .env — contains credentials so it doesn't belong here

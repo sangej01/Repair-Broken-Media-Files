@@ -20,6 +20,10 @@ hiddenimports = [
     "psycopg2._psycopg",
     "yaml",
     "_yaml",
+    # Local modules imported lazily (inside functions), which PyInstaller's
+    # static analysis can miss.
+    "dbbackup",
+    "scanlock",
 ]
 
 a = Analysis(

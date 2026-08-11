@@ -480,6 +480,14 @@ class MainWindow(QMainWindow):
         self._rescan_timeouts_btn.clicked.connect(self._rescan_timeouts)
         action_row.addWidget(self._rescan_timeouts_btn)
         
+        self._backup_btn = QPushButton("Backup DB")
+        self._backup_btn.setToolTip(
+            "Save a timestamped snapshot of the database to the backup folder "
+            "(also happens automatically on exit)."
+        )
+        self._backup_btn.clicked.connect(self._backup_db_now)
+        action_row.addWidget(self._backup_btn)
+        
         self._queue_btn = QPushButton("Queue for Remediation")
         self._queue_btn.clicked.connect(self._queue_selected)
         action_row.addWidget(self._queue_btn)
@@ -1025,6 +1033,23 @@ class MainWindow(QMainWindow):
         self._worker.finished.connect(self._on_scan_finished)
         self._worker.error.connect(self._on_error)
         self._worker.start()
+
+    @Slot()
+    def _backup_db_now(self):
+        """Manually back up the SQLite DB to the configured backup folder."""
+        import dbbackup
+        r = dbbackup.backup_db()
+        if r.get("ok"):
+            extra = f"\nPruned {r['pruned']} old backup(s)." if r.get("pruned") else ""
+            QMessageBox.information(
+                self, "Backup Complete",
+                f"Database backed up to:\n{r['path']}{extra}",
+            )
+        else:
+            QMessageBox.warning(
+                self, "Backup Not Done",
+                f"Could not back up the database:\n{r.get('error', 'unknown error')}",
+            )
 
     @Slot()
     def _rescan_timeouts(self):
@@ -2370,6 +2395,17 @@ class MainWindow(QMainWindow):
         # Release the cross-process scan lock on exit.
         try:
             import scanlock; scanlock.release()
+        except Exception:
+            pass
+
+        # Auto-backup the SQLite DB to the deploy share (best-effort, off-machine).
+        try:
+            import dbbackup
+            r = dbbackup.backup_db()
+            if r.get("ok"):
+                print(f"[backup] DB backed up to {r['path']}", flush=True)
+            elif r.get("error"):
+                print(f"[backup] skipped: {r['error']}", flush=True)
         except Exception:
             pass
 
