@@ -35,3 +35,7 @@ Desktop.ini
 # Runtime scan lock (never commit)
 *.scanlock
 repair.db.scanlock
+
+# PyInstaller intermediate build artifacts
+build/
+*.exe.bak-*

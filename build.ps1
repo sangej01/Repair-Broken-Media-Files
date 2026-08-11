@@ -7,85 +7,93 @@
 #   - Python 3.11+ on PATH
 #   - Pipenv installed (pip install pipenv)
 #   - Run from inside the project directory
-
-$ErrorActionPreference = "Stop"
+#
+# Notes:
+#   - We deliberately DO NOT use `$ErrorActionPreference = "Stop"`, because
+#     pipenv/pip write harmless progress to stderr, which that setting would
+#     treat as fatal. Instead we check $LASTEXITCODE explicitly after each
+#     external command.
 
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host " Repair Broken Media Files - Build Script" -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host ""
 
-# Verify we're in the right directory
-if (-not (Test-Path "main.py")) {
-    Write-Host "ERROR: main.py not found. Run this script from the project root." -ForegroundColor Red
-    exit 1
-}
-if (-not (Test-Path "repair_broken_media.spec")) {
-    Write-Host "ERROR: repair_broken_media.spec not found." -ForegroundColor Red
+function Fail($msg) {
+    Write-Host "ERROR: $msg" -ForegroundColor Red
     exit 1
 }
 
-# Step 1: Install dependencies (skip if already installed)
-Write-Host "[1/4] Ensuring dependencies are installed..." -ForegroundColor Yellow
-pipenv install --dev 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERROR: pipenv install failed" -ForegroundColor Red
-    exit 1
-}
+# Verify we're in the right directory
+if (-not (Test-Path "main.py")) { Fail "main.py not found. Run this script from the project root." }
+if (-not (Test-Path "repair_broken_media.spec")) { Fail "repair_broken_media.spec not found." }
+
+# Step 1: Ensure dependencies are installed (pipenv writes to stderr; that's OK)
+Write-Host "[1/5] Ensuring app dependencies are installed..." -ForegroundColor Yellow
+pipenv install 2>&1 | ForEach-Object { "$_" } | Out-Null
+if ($LASTEXITCODE -ne 0) { Fail "pipenv install failed (exit $LASTEXITCODE)" }
 Write-Host "  OK"
 Write-Host ""
 
-# Step 2: Locate the venv (so we can call PyInstaller directly with right interpreter)
-$VenvPath = (pipenv --venv).Trim()
+# Step 2: Locate the venv so we build with the interpreter that HAS the app deps
+Write-Host "[2/5] Locating virtualenv..." -ForegroundColor Yellow
+$VenvPath = (pipenv --venv 2>$null)
+if ($LASTEXITCODE -ne 0 -or -not $VenvPath) { Fail "Could not locate pipenv venv (is pipenv installed?)" }
+$VenvPath = $VenvPath.Trim()
 $VenvPython = Join-Path $VenvPath "Scripts\python.exe"
-if (-not (Test-Path $VenvPython)) {
-    Write-Host "ERROR: venv python not found at $VenvPython" -ForegroundColor Red
-    exit 1
-}
+if (-not (Test-Path $VenvPython)) { Fail "venv python not found at $VenvPython" }
+Write-Host "  venv: $VenvPath"
+Write-Host ""
 
-# Step 3: Clean previous build artifacts
-Write-Host "[2/4] Cleaning previous build..." -ForegroundColor Yellow
+# Step 3: Ensure PyInstaller is available INSIDE the venv (not just system Python).
+# This is the common failure: the venv has PySide6/psycopg2 but not PyInstaller.
+Write-Host "[3/5] Ensuring PyInstaller is in the venv..." -ForegroundColor Yellow
+& $VenvPython -c "import PyInstaller" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  PyInstaller missing - installing into venv..."
+    & $VenvPython -m pip install pyinstaller 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { Fail "Failed to install PyInstaller into the venv" }
+}
+# Sanity: confirm the venv can import the app's runtime deps too.
+& $VenvPython -c "import PySide6, psycopg2, dotenv, requests, PyInstaller" 2>$null
+if ($LASTEXITCODE -ne 0) { Fail "venv is missing a required dependency (PySide6/psycopg2/dotenv/requests/PyInstaller)" }
+Write-Host "  OK"
+Write-Host ""
+
+# Step 4: Clean previous build artifacts
+Write-Host "[4/5] Cleaning previous build..." -ForegroundColor Yellow
 if (Test-Path "build") { Remove-Item -Recurse -Force "build" }
 if (Test-Path "dist")  { Remove-Item -Recurse -Force "dist" }
 Write-Host "  Cleaned build/ and dist/"
 Write-Host ""
 
-# Step 4: Run PyInstaller via the venv's Python (guarantees PySide6/psycopg2/etc are visible)
-Write-Host "[3/4] Building executable with PyInstaller (may take 1-3 minutes)..." -ForegroundColor Yellow
+# Step 5: Build with the venv's Python, then stage support files
+Write-Host "[5/5] Building executable with PyInstaller (may take 1-3 minutes)..." -ForegroundColor Yellow
 & $VenvPython -m PyInstaller --noconfirm repair_broken_media.spec
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERROR: PyInstaller build failed" -ForegroundColor Red
-    exit 1
-}
+if ($LASTEXITCODE -ne 0) { Fail "PyInstaller build failed (exit $LASTEXITCODE)" }
 Write-Host ""
-
-# Step 4: Stage support files alongside the exe
-Write-Host "[4/4] Staging deployment package..." -ForegroundColor Yellow
 
 $DistDir = Join-Path (Get-Location) "dist"
 $ExePath = Join-Path $DistDir "RepairBrokenMedia.exe"
-
-if (-not (Test-Path $ExePath)) {
-    Write-Host "ERROR: Expected exe not found at $ExePath" -ForegroundColor Red
-    exit 1
-}
+if (-not (Test-Path $ExePath)) { Fail "Expected exe not found at $ExePath" }
 
 # Copy supporting files into dist/ for easy deployment
 Copy-Item ".env.example" -Destination $DistDir -Force
 Copy-Item "README.md"    -Destination $DistDir -Force
-if (Test-Path "docs") {
-    Copy-Item -Recurse "docs" -Destination $DistDir -Force
-}
+if (Test-Path "docs") { Copy-Item -Recurse "docs" -Destination $DistDir -Force }
 
-# Report final size
+# Report version + size, and verify the exe actually runs.
 $ExeSize = (Get-Item $ExePath).Length / 1MB
+$BuiltVersion = (& $ExePath version 2>&1 | Select-Object -First 1)
+
 Write-Host ""
 Write-Host "==========================================" -ForegroundColor Green
 Write-Host " Build successful!" -ForegroundColor Green
 Write-Host "==========================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "  Output: $ExePath"
-Write-Host ("  Size:   {0:N1} MB" -f $ExeSize)
+Write-Host "  Output:  $ExePath"
+Write-Host ("  Size:    {0:N1} MB" -f $ExeSize)
+Write-Host "  Version: $BuiltVersion"
 Write-Host ""
 Write-Host "Files in dist/:"
 Get-ChildItem $DistDir | Select-Object Name, @{N='Size(MB)'; E={[math]::Round($_.Length/1MB, 2)}} | Format-Table
