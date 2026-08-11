@@ -1660,8 +1660,10 @@ class MainWindow(QMainWindow):
     
     @Slot()
     def _select_all(self):
-        """Select all visible rows."""
+        """Select all VISIBLE rows (skips rows hidden by filters/Hide Skipped)."""
         for row in range(self._table.rowCount()):
+            if self._table.isRowHidden(row):
+                continue
             widget = self._table.cellWidget(row, COL_SELECT)
             if widget:
                 checkbox = widget.findChild(QCheckBox)
