@@ -127,23 +127,35 @@ Don't delete on the CORRUPT flag alone. Diagnose first.
 
 ```mermaid
 flowchart TD
-    A[Right-click CORRUPT row] --> B[Deep Inspect ffprobe]
+    A[CORRUPT file] --> AA{Corruption type<br/>filter set?}
+    AA -->|A or B — batch| AB[Use context batch button<br/>Re-search all Group A / Inspect all Group B]
+    AA -->|one at a time| B[Right-click → Deep Inspect ffprobe]
+    AB -->|Group A| BA[Delete + Re-search all shown A rows<br/>confirm → done]
+    AB -->|Group B| BB[Inspect each B file sequentially]
+    BB --> BC{Per-file verdict}
+    BC -->|fixable=True| BD[Delete + Re-search<br/>auto-confirmed]
+    BC -->|fixable=False| BE[Delete + Blocklist + different-release search<br/>auto-confirmed]
+    BC -->|inconclusive/error| BF[Summary dialog — review manually]
     B --> C{Diagnosis}
     C -->|Truncated / END damaged| D[fixable: re-download same release]
-    C -->|Container-level damage| E[source/release bad:<br/>need a DIFFERENT release]
+    C -->|Container-level damage| E[bad source:<br/>blocklist + find a DIFFERENT release]
     C -->|Ambiguous<br/>header+tail both clean| F[Run Full Deep Decode]
     F --> G{Verdict}
     G -->|CLEAN| H[False positive - re-scan to clear]
     G -->|PLAYABLE| I[Brief glitch - watchable]
     G -->|RE-DOWNLOAD| D
     G -->|BAD SOURCE| E
-    D --> J[Delete + Re-search button<br/>offered in the dialog]
-    E --> K[Manual: find a different release]
+    D --> J[Delete + Re-search button in dialog<br/>same release is fine]
+    E --> K[Delete + Blocklist + Re-search button in dialog<br/>Radarr finds a different release]
 ```
 
-- **Deep Inspect** is fast (ffprobe + header + tail decode only). When it can conclude
-  "re-download will fix it," the report dialog shows a **Delete + Re-search (Radarr)**
-  button directly.
+- **Deep Inspect** is fast (ffprobe + header + tail decode only). The report dialog
+  offers a one-click action for both outcomes: **Delete + Re-search** (fixable) or
+  **Delete + Blocklist + Re-search** (bad source — Radarr won't grab the same bad
+  release again).
+- **Inspect all Group B** (batch): inspects every visible Group B file sequentially
+  and acts on definitive results automatically — no manual dialog for fixable/bad-source.
+  Only inconclusive results need your attention.
 - **Full Deep Decode** is opt-in and decodes the whole file (minutes), offered only
   when Deep Inspect is inconclusive. It maps where errors occur and returns a verdict.
 - Benign `-f null` muxer "non monotonic DTS" warnings are **ignored** by both the
@@ -261,8 +273,9 @@ The **Problematic** status filter selects `TIMEOUT + UNKNOWN + ERROR` in one cli
 (rows in DELETED/RESEARCHING/REMEDIATED are grayed + italic)
 
 **Bottom buttons:** Select All · Select None · Re-scan TIMEOUTs · Backup DB ·
-Check Re-downloads · Queue for Remediation · Delete + Re-search · Open Folder ·
-Show ffmpeg Log
+Check Re-downloads · Queue for Remediation · Delete + Re-search ·
+Re-search all Group A / Inspect all Group B (context batch — enabled by Corruption type filter) ·
+Open Folder · Show ffmpeg Log
 
 **Right-click:** Open Folder · Show ffmpeg Log · Deep Inspect (ffprobe) · Re-scan ·
 Queue/Remove from Queue · Mark as Skipped · Verify Folder Exists ·
@@ -294,7 +307,7 @@ See [INTERFACE.md](INTERFACE.md) for the full control-by-control reference.
 | Both progress bars stuck at 0% | ffmpeg **hung on a NAS read** (CPU flat) | Stall detector times it out (~5 min); or Stop + re-scan |
 | Can't start a scan ("Scanner Busy") | Another scanner holds the **lock** | Close the other instance; stale locks auto-clear |
 | Movie won't re-download | **Not in Radarr** (FAILED) | Add to Radarr or handle manually (Scenario 8) |
-| "Imported" but still corrupt | Radarr re-grabbed the **same bad release** | Get a *different* release |
+| "Imported" but still corrupt | Radarr re-grabbed the **same bad release** | Deep Inspect → if BAD SOURCE, use Delete + Blocklist + Re-search (or Inspect all Group B) so Radarr finds a different release |
 | Lots of false TIMEOUTs | Long low-bitrate films / flaky NAS | Fixed by duration-aware timeout (v1.7.1+); re-scan |
 
 ---

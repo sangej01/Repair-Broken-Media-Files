@@ -153,6 +153,7 @@ those only run when you request them from the right-click menu.)
 | **Status** | Show one scan verdict, **All**, or **Problematic**. |
 | **Problematic** (in the Status list) | Shortcut for **TIMEOUT + UNKNOWN + ERROR** at once — every file worth re-scanning. Sits above a dotted separator. |
 | **Remediation** | Show one workflow state, or **Any**. |
+| **Corruption type** | Filter CORRUPT files by triage class. Options: **All types** (default), **A (re-download)** — truncated/missing-frames corruption fixable by re-downloading the same release; **B (source damage)** — container or encoder damage from the source, re-downloading the same release won't help; **Unclassified** — CORRUPT but no known rule matched. Selecting A or B also enables the context batch button at the bottom. Class is computed on the fly; no extra DB column. |
 | **Search** | Filter by folder name as you type (**Ctrl+F** to focus). |
 | **Hide Skipped / Show Skipped** | Toggle. Hides rows whose **Remediation is SKIPPED** — files you chose to leave alone via "Mark as Skipped". Applies immediately, in any view, scanning or not. Click again to show them. |
 
@@ -211,8 +212,10 @@ Click any column header to sort. **Row styling:**
 - **Deep Inspect (ffprobe)** runs ffprobe + a header decode + a tail decode
   (progress bar, fast). It concludes:
   - **Truncated / incomplete** → offers a one-click **Delete + Re-search (Radarr)**.
-  - **Container-level damage** → the source/release is bad; a re-download of the
-    *same* release likely won't help.
+  - **Container-level damage (bad source)** → the source/release is fundamentally broken;
+    re-downloading the *same* release will reproduce the same broken file. The report
+    offers a one-click **Delete + Blocklist + Re-search** which tells Radarr to find a
+    *different* release (the bad one is blocked so it won't be grabbed again).
   - **Ambiguous** (header + end both clean) → offers **Run Full Deep Decode**.
 - **Full Deep Decode** (opt-in; decodes the whole file, minutes long, cancelable)
   maps where errors occur and returns a verdict: **CLEAN / PLAYABLE / RE-DOWNLOAD /
@@ -234,7 +237,8 @@ Click any column header to sort. **Row styling:**
 | **Backup DB** | Save a timestamped snapshot of the database to the backup folder (also runs automatically on exit). |
 | **Check Re-downloads** | Ask Radarr which RESEARCHING movies have finished (imported), which are downloading, and which are pending — so you know what's ready to re-scan without opening Radarr. |
 | **Queue for Remediation** | Mark the checked (displayed) rows QUEUED |
-| **Delete + Re-search** | Run remediation on all QUEUED files (delete from disk → Radarr unmonitor → delete record → monitor → search). Asks to confirm. |
+| **Delete + Re-search** | Run remediation on checked rows (or all QUEUED if nothing is checked): delete from disk → Radarr unmonitor → delete record → monitor → search for the same release. Asks to confirm. |
+| **Re-search all Group A** / **Inspect all Group B** | Context-sensitive batch button — label and behavior depend on the **Corruption type** filter. **Group A:** Delete + Re-search on all visible A targets (checked rows first, else all shown). **Group B:** Deep Inspect each file sequentially, then act automatically — fixable ones get Delete + Re-search; bad-source ones get Delete + Blocklist + search for a *different* release; inconclusive/errors go to a summary dialog. Disabled unless A or B is selected in the Corruption type filter, and while a scan or remediation is running. |
 | **Open Folder** | Open the selected row's folder |
 | **Show ffmpeg Log** | Show the selected row's scan output |
 

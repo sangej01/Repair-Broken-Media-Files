@@ -91,7 +91,7 @@ one-click fix when it will.
 
 ### What Happens Automatically (Per Movie)
 
-For each queued movie, the tool performs these steps in sequence:
+**Normal re-download path** (Group A / truncated / same release is fine):
 
 | Step | Action | What Changes |
 |------|--------|--------------|
@@ -100,7 +100,16 @@ For each queued movie, the tool performs these steps in sequence:
 | 3 | **Unmonitor** | Radarr stops watching this movie temporarily |
 | 4 | **Delete file record** | Radarr's database entry removed |
 | 5 | **Re-monitor** | Radarr starts watching again |
-| 6 | **Search** | Radarr triggers indexer searches |
+| 6 | **Search** | Radarr triggers indexer searches for same release |
+
+**Blocklist + different-release path** (Group B / bad source):
+
+| Step | Action | What Changes |
+|------|--------|--------------|
+| 1 | **Lookup** | Find movie in Radarr by folder path |
+| 2 | **Delete from disk** | `shutil.rmtree` removes the entire folder |
+| 3 | **Fetch history** | Find the most recent "grabbed" record for this movie |
+| 4 | **Mark history failed** | Radarr blocklists that release AND automatically searches for a different one |
 
 **State transitions:**
 ```
@@ -146,9 +155,10 @@ Right-click → **🔬 Deep Inspect (ffprobe)**. In a few seconds it reports one
   → a bad download. The dialog shows a **Delete + Re-search (Radarr)** button.
   Click it to fix in one step.
 - **"Container-level damage — the file structure itself is broken"**
-  → the source release (or a disk write) is bad. Re-downloading the *same* release
-  will probably fail again; find a different one. No one-click button is offered
-  here on purpose.
+  → the source release is fundamentally bad. Re-downloading the *same* release will
+  produce the same broken file. The dialog shows a **Delete + Blocklist + Re-search**
+  button: this deletes the file, tells Radarr to blocklist that release (so it's
+  never grabbed again), and triggers a search for a *different* release automatically.
 - **"Damage is in the un-probed MIDDLE"** (inconclusive)
   → the dialog offers **Run Full Deep Decode**.
 
@@ -163,13 +173,24 @@ occur and gives a verdict:
 | **CLEAN** | No errors found — the flag was transient. Re-scan to clear it. |
 | **PLAYABLE** | A brief glitch; the file is watchable. Re-download optional. |
 | **RE-DOWNLOAD** | Localized damage (bad download chunk). Click the offered **Delete + Re-search** button. |
-| **BAD SOURCE** | Errors everywhere — the release is bad. Get a *different* release. |
+| **BAD SOURCE** | Errors everywhere — the release is bad. Click **Delete + Blocklist + Re-search** in the dialog so Radarr finds a *different* release. |
 
 ### Rule of thumb
 
-- **Truncated / RE-DOWNLOAD** → let the tool delete + re-search (one click).
-- **BAD SOURCE / container damage** → don't just re-download the same release; it'll
-  likely come back corrupt. Mark as Skipped or find a different source.
+- **Truncated / RE-DOWNLOAD** → let the tool delete + re-search (one click). Same release is fine.
+- **BAD SOURCE / container damage** → use **Delete + Blocklist + Re-search** (one click in the
+  report dialog). This tells Radarr to blocklist the bad release and find a different one
+  automatically — you don't need to touch Radarr manually.
+
+### Batch workflow for many files at once
+
+Instead of inspecting one at a time, use the **Corruption type** filter:
+
+- Set filter to **A (re-download)** → click **Re-search all Group A** → confirms and acts on all visible Group A files at once.
+- Set filter to **B (source damage)** → click **Inspect all Group B** → inspects all visible Group B files sequentially, then automatically:
+  - fixable ones: Delete + Re-search
+  - bad-source ones: Delete + Blocklist + search for a different release
+  - inconclusive/errors: shown in a summary for manual review
 
 ---
 
@@ -277,10 +298,10 @@ The **Attempts** column tracks how many times you've remediated a movie. Use it 
 - Pluck Movies has rsync issue specifically with this file
 
 **Action:**
-1. Check the ffmpeg log - does the corruption pattern look the same?
-2. If yes → blacklist this release in Radarr (when v2 has blocklist support)
-3. Try manually finding a different release source
-4. Or mark as SKIPPED and accept the loss
+1. Check the ffmpeg log — does the corruption pattern look the same each time?
+2. If yes → right-click → **Deep Inspect**. If it says BAD SOURCE, click **Delete + Blocklist + Re-search** in the report dialog. Radarr will blocklist that release and search for a different one automatically.
+3. Or set Corruption type → **B (source damage)** → **Inspect all Group B** to handle a batch at once.
+4. If Radarr can't find any other release → **Mark as Skipped** and accept the loss.
 
 ### Pattern 2: Many Movies, All Attempts=2
 **Symptom:** Lots of movies showing 2 attempts, all freshly corrupt

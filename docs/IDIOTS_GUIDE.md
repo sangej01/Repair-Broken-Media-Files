@@ -9,7 +9,9 @@ You found a bad movie. This tells you what to do. Follow the steps. Don't think 
 1. Look at the **Status** column.
 2. If it says **CORRUPT**, look at the **Reason** column.
 3. If the Reason starts with **`[Incomplete / truncated]`** → tick the box → click **Delete + Re-search**. Done.
+   - *Have a lot of them?* Set **Corruption type** filter → **A (re-download)** → click **Re-search all Group A**. Done in one shot.
 4. If the Reason starts with **`[Broken container]`** or **`[Encoder artifact]`** → right-click the row → **Deep Inspect** first, then do what it tells you.
+   - *Have several of them?* Set **Corruption type** filter → **B (source damage)** → click **Inspect all Group B**. The app inspects them all and automatically kicks off the right fix for each one.
 5. Everything else: see the table below.
 
 That's it. The rest of this file is just more detail for when you forget.
@@ -176,7 +178,7 @@ Some things live in **only one** place:
 → Wait a while. Click **Check Re-downloads**. When it says "Imported," **re-scan that movie** to confirm the new copy is good. (Radarr "Imported" only means a file arrived — NOT that it's good.)
 
 **"A file keeps coming back CORRUPT after re-downloading."**
-→ The **Attempts** number is going up (turns orange at 2, red at 3+). The source release is bad. Stop re-downloading the same thing. Find a different release in Radarr, or **Mark as Skipped**.
+→ The **Attempts** number is going up (turns orange at 2, red at 3+). The source release is bad. Right-click → **Deep Inspect** to confirm it's a bad source, then use **Delete + Re-search** from the report dialog — or set Corruption type to **B** and use **Inspect all Group B**, which will automatically blocklist the bad release and tell Radarr to find a *different* one. If nothing else is available, **Mark as Skipped**.
 
 **"Deleted + Re-search said FAILED — 'Movie not found in Radarr.'"**
 → Radarr doesn't have this movie in its library, so it can't fetch a new copy. Add it to Radarr yourself, or handle the file manually.
