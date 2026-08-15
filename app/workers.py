@@ -260,29 +260,48 @@ class FullDecodeWorker(QThread):
 
 
 class RemediateWorker(QThread):
-    """Background worker for remediation (delete + Radarr search)."""
-    
+    """Background worker for remediation (delete + Radarr search).
+
+    When ``blocklist=True`` the worker uses the 'mark history failed' path
+    instead of a plain re-search.  This:
+      1. Deletes the file from disk (same as normal).
+      2. Finds the most recent 'grabbed' history record for the movie.
+      3. Calls POST /api/v3/history/failed/{id}, which simultaneously
+         blocklists the bad release AND triggers a new search for a
+         *different* release.  Use this for Group B 'bad source' files
+         where re-downloading the same release would reproduce the same
+         broken file.
+    """
+
     # Signals
     step = Signal(str, str, str, str)  # folder, action, status, message
     finished = Signal(dict)  # RemediationStats as dict
     error = Signal(str)
-    
-    def __init__(self, folder_paths: List[str], radarr_client, dry_run: bool = False, max_batch: Optional[int] = None):
+
+    def __init__(
+        self,
+        folder_paths: List[str],
+        radarr_client,
+        dry_run: bool = False,
+        max_batch: Optional[int] = None,
+        blocklist: bool = False,
+    ):
         super().__init__()
         self.folder_paths = folder_paths
         self.radarr_client = radarr_client
         self.dry_run = dry_run
         self.max_batch = max_batch
+        self.blocklist = blocklist
         self._cancelled = False
-    
+
     def run(self):
         """Execute remediation workflow in background thread."""
         from pathlib import Path
         import shutil
-        
+
         # Create thread-local database connection
         thread_db_conn = db.init_db()
-        
+
         stats = {
             "total": len(self.folder_paths),
             "processed": 0,
@@ -290,25 +309,25 @@ class RemediateWorker(QThread):
             "searched": 0,
             "failed": 0,
             "skipped": 0,
-            "failures": [],  # list of (folder_name, reason) tuples
-            "successes": [], # list of folder_names that were searched
+            "failures": [],   # list of (folder_name, reason) tuples
+            "successes": [],  # list of folder_names that were searched
         }
-        
+
         try:
             # Limit batch if specified
             paths_to_process = self.folder_paths[:self.max_batch] if self.max_batch else self.folder_paths
-            
+
             for folder_path in paths_to_process:
                 if self._cancelled:
                     break
-                
+
                 folder_name = Path(folder_path).name
-                
+
                 try:
                     # Step 1: Find movie in Radarr
                     self.step.emit(folder_path, "lookup", "running", "Looking up in Radarr...")
                     movie = self.radarr_client.find_movie_by_path(folder_path)
-                    
+
                     if not movie:
                         self.step.emit(folder_path, "lookup", "failed", "Movie not found in Radarr")
                         db.mark_failed(thread_db_conn, folder_path, "Movie not found in Radarr")
@@ -316,14 +335,14 @@ class RemediateWorker(QThread):
                         stats["failures"].append((folder_name, "Movie not found in Radarr"))
                         stats["processed"] += 1
                         continue
-                
+
                     movie_id = movie.get("id")
                     moviefile = movie.get("movieFile", {})
                     file_id = moviefile.get("id")
-                    
+
                     # Step 2: Delete file from disk
                     self.step.emit(folder_path, "delete", "running", "Deleting file from disk...")
-                    
+
                     if not self.dry_run:
                         if Path(folder_path).exists():
                             shutil.rmtree(folder_path)
@@ -333,42 +352,98 @@ class RemediateWorker(QThread):
                             self.step.emit(folder_path, "delete", "warning", "Folder not found on disk")
                     else:
                         self.step.emit(folder_path, "delete", "success", "[DRY RUN] Would delete")
-                
-                    # Step 3: Unmonitor in Radarr
-                    self.step.emit(folder_path, "unmonitor", "running", "Unmonitoring in Radarr...")
-                    if not self.dry_run:
-                        self.radarr_client.unmonitor(movie_id)
-                    else:
-                        self.step.emit(folder_path, "unmonitor", "success", "[DRY RUN] Would unmonitor")
-                    
-                    # Step 4: Delete moviefile record if exists
-                    if file_id:
-                        self.step.emit(folder_path, "radarr_delete", "running", "Deleting file record in Radarr...")
+
+                    if self.blocklist:
+                        # Blocklist path (bad-source Group B files):
+                        # Find the most recent 'grabbed' history record and mark
+                        # it failed — Radarr blocklists the release and searches
+                        # for a different one automatically.
+                        self.step.emit(folder_path, "blocklist", "running",
+                                       "Finding history record to blocklist release...")
+                        history_id = None
                         if not self.dry_run:
-                            self.radarr_client.delete_moviefile(file_id)
+                            try:
+                                records = self.radarr_client.get_movie_history(movie_id)
+                                grabbed = next(
+                                    (r for r in records if r.get("eventType") == "grabbed"), None
+                                )
+                                if grabbed:
+                                    history_id = grabbed["id"]
+                                    source_title = grabbed.get("sourceTitle", "unknown release")
+                                else:
+                                    source_title = "unknown release"
+                            except Exception as hist_err:
+                                self.step.emit(folder_path, "blocklist", "warning",
+                                               f"Could not fetch history: {hist_err}")
+
+                        if not self.dry_run and history_id:
+                            self.step.emit(folder_path, "blocklist", "running",
+                                           f"Blocklisting '{source_title}' + triggering search for different release...")
+                            self.radarr_client.mark_history_failed(history_id)
+                            db.mark_researching(thread_db_conn, folder_path)
+                            stats["searched"] += 1
+                            stats["successes"].append(folder_name)
+                            self.step.emit(folder_path, "blocklist", "success",
+                                           f"Blocklisted '{source_title}'; Radarr will search for a different release")
+                        elif not self.dry_run and not history_id:
+                            # No grabbed history found — fall back to plain search
+                            # so we don't silently leave the movie stuck.
+                            self.step.emit(folder_path, "blocklist", "warning",
+                                           "No grabbed history found; falling back to plain re-search")
+                            if file_id:
+                                self.radarr_client.delete_moviefile(file_id)
+                            self.radarr_client.monitor(movie_id)
+                            cmd_id = self.radarr_client.search(movie_id)
+                            db.mark_researching(thread_db_conn, folder_path)
+                            stats["searched"] += 1
+                            stats["successes"].append(folder_name)
+                            self.step.emit(folder_path, "search", "success",
+                                           f"Fallback search queued (cmd {cmd_id})")
                         else:
-                            self.step.emit(folder_path, "radarr_delete", "success", "[DRY RUN] Would delete file record")
-                    
-                    # Step 5: Re-monitor
-                    self.step.emit(folder_path, "monitor", "running", "Re-monitoring in Radarr...")
-                    if not self.dry_run:
-                        self.radarr_client.monitor(movie_id)
+                            self.step.emit(folder_path, "blocklist", "success",
+                                           "[DRY RUN] Would blocklist release + search for different release")
+
                     else:
-                        self.step.emit(folder_path, "monitor", "success", "[DRY RUN] Would monitor")
-                    
-                    # Step 6: Trigger search
-                    self.step.emit(folder_path, "search", "running", "Triggering Radarr search...")
-                    if not self.dry_run:
-                        cmd_id = self.radarr_client.search(movie_id)
-                        db.mark_researching(thread_db_conn, folder_path)
-                        stats["searched"] += 1
-                        stats["successes"].append(folder_name)
-                        self.step.emit(folder_path, "search", "success", f"Search queued (cmd {cmd_id})")
-                    else:
-                        self.step.emit(folder_path, "search", "success", "[DRY RUN] Would trigger search")
-                    
+                        # Normal re-search path (Group A / plain re-download):
+                        # Step 3: Unmonitor in Radarr
+                        self.step.emit(folder_path, "unmonitor", "running", "Unmonitoring in Radarr...")
+                        if not self.dry_run:
+                            self.radarr_client.unmonitor(movie_id)
+                        else:
+                            self.step.emit(folder_path, "unmonitor", "success", "[DRY RUN] Would unmonitor")
+
+                        # Step 4: Delete moviefile record if exists
+                        if file_id:
+                            self.step.emit(folder_path, "radarr_delete", "running",
+                                           "Deleting file record in Radarr...")
+                            if not self.dry_run:
+                                self.radarr_client.delete_moviefile(file_id)
+                            else:
+                                self.step.emit(folder_path, "radarr_delete", "success",
+                                               "[DRY RUN] Would delete file record")
+
+                        # Step 5: Re-monitor
+                        self.step.emit(folder_path, "monitor", "running", "Re-monitoring in Radarr...")
+                        if not self.dry_run:
+                            self.radarr_client.monitor(movie_id)
+                        else:
+                            self.step.emit(folder_path, "monitor", "success", "[DRY RUN] Would monitor")
+
+                        # Step 6: Trigger search
+                        self.step.emit(folder_path, "search", "running", "Triggering Radarr search...")
+                        if not self.dry_run:
+                            cmd_id = self.radarr_client.search(movie_id)
+                            db.mark_researching(thread_db_conn, folder_path)
+                            stats["searched"] += 1
+                            stats["successes"].append(folder_name)
+                            self.step.emit(folder_path, "search", "success",
+                                           f"Search queued (cmd {cmd_id})")
+                        else:
+                            self.step.emit(folder_path, "search", "success",
+                                           "[DRY RUN] Would trigger search")
+
                     stats["processed"] += 1
-                    
+
                 except Exception as e:
                     import traceback
                     tb = traceback.format_exc()

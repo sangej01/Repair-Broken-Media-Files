@@ -103,7 +103,7 @@ If the Reason says any of these:
 | VERDICT says | What to do |
 |--------------|------------|
 | **RE-DOWNLOAD** | Damage is in one spot. A new copy will likely fix it. → **Delete + Re-search.** |
-| **BAD SOURCE** | The whole file is rotten. A new copy of the SAME release won't help. → You need a **different** release (go into Radarr yourself). |
+| **BAD SOURCE** | The whole file is rotten. A new copy of the SAME release won't help. → **Delete + Blocklist + Re-search** (app tells Radarr to find a *different* release). |
 | **PLAYABLE** | Tiny glitch, movie still watches fine. → Leave it, or **Mark as Skipped.** |
 | **CLEAN** | Turns out it's actually fine now. → **Re-scan** to clear the CORRUPT flag. |
 
@@ -111,8 +111,11 @@ If the Reason says any of these:
 1. Set the **Corruption type** filter to **B (source damage)**.
 2. Click **Inspect all Group B** at the bottom.
 3. Watch the progress dialog as each file is inspected (ffprobe, header + tail).
-4. When it finishes, a grouped summary shows: fixable / bad source / inconclusive.
-5. If any are fixable, click **"Re-search the fixable ones"** to kick off Delete + Re-search for just those. The true bad-source ones stay behind for you to handle in Radarr manually.
+4. When it finishes, the app **automatically acts on definitive results**:
+   - **Fixable** → confirmation dialog for Delete + Re-search (same release is fine).
+   - **Bad source** → confirmation dialog for Delete + Blocklist + search for a *different* release. Radarr will not grab the same bad release again.
+   - **Inconclusive / errors** → summary dialog showing what needs your attention.
+5. If all results were definitive, no summary dialog appears — it's already handled.
 
 ---
 
@@ -126,7 +129,7 @@ If the Reason says any of these:
 | **Check Re-downloads** | Asks Radarr which new copies have arrived. |
 | **Queue for Remediation** | Marks ticked files to fix later (doesn't fix them yet). |
 | **Delete + Re-search** | ⚠️ **The big one.** Deletes the bad file and tells Radarr to get a new one. Acts on **checked** rows; if nothing is checked, falls back to the **QUEUED** files. It lists what it will delete and asks first. |
-| **Re-search all Group A** / **Inspect all Group B** | Context batch button — label and action change based on the **Corruption type** filter. Set filter to *A* → runs Delete + Re-search on all visible Group A targets. Set to *B* → runs Deep Inspect on all visible Group B targets and shows a grouped summary. Disabled unless A or B is selected. |
+| **Re-search all Group A** / **Inspect all Group B** | Context batch button — label and action change based on the **Corruption type** filter. Set filter to *A* → runs Delete + Re-search on all visible Group A targets. Set to *B* → runs Deep Inspect on all visible Group B targets; fixable ones get Delete + Re-search, bad-source ones get Delete + Blocklist + different-release search, inconclusive ones get a summary. Disabled unless A or B is selected. |
 | **Open Folder** | Opens the movie's folder in Windows. |
 | **Show ffmpeg Log** | Shows the full error + a plain-English diagnosis. |
 
@@ -194,7 +197,7 @@ Two scanners writing at once can crash the app and mess up the results. One scan
 
 - 🟢 **CLEAN** = good boy, leave it.
 - 🔴 **CORRUPT** + `[truncated]` = tick box, press **Delete + Re-search** — *or* set Corruption type to **A**, press **Re-search all Group A** to do the whole class at once.
-- 🔴 **CORRUPT** + `[container/encoder]` = right-click, **Deep Inspect**, then obey the VERDICT — *or* set Corruption type to **B**, press **Inspect all Group B** to check the whole class at once.
+- 🔴 **CORRUPT** + `[container/encoder]` = right-click, **Deep Inspect**, then obey the VERDICT — *or* set Corruption type to **B**, press **Inspect all Group B**; fixable ones re-download, bad-source ones get blocklisted + different release, all automatically.
 - 🟠 **TIMEOUT** = press **Re-scan TIMEOUTs**, it's probably fine.
 - After any re-download: **Check Re-downloads**, then **re-scan** the new copy.
 

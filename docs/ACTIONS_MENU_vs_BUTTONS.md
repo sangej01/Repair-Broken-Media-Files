@@ -55,9 +55,11 @@ These have **no menu item**. They act on a group:
   adapts to the **Corruption type** filter combo (see below). Set the combo to
   *A (re-download)* → button runs Delete + Re-search on all visible Group A
   targets; set to *B (source damage)* → button runs Deep Inspect sequentially
-  on all visible Group B targets, then shows a grouped summary with an optional
-  "Re-search the fixable ones" action. Disabled when the combo is on
-  *All types* or *Unclassified*.
+  on all visible Group B targets, then acts on definitive results automatically:
+  fixable ones → Delete + Re-search (same release is fine); bad-source ones →
+  Delete + Blocklist + search for a *different* release (Radarr will not grab
+  the same bad release again); inconclusive/errors → summary dialog. Disabled
+  when the combo is on *All types* or *Unclassified*.
 - **Re-scan TIMEOUTs** — re-check every TIMEOUT file at once
 - **Check Re-downloads** — ask Radarr about all RESEARCHING files
 - **Backup DB** — snapshot the whole database

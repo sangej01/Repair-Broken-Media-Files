@@ -169,6 +169,48 @@ class RadarrClient:
             raise RuntimeError(f"Failed to fetch Radarr queue: {e}")
         return records
     
+    def get_movie_history(self, movie_id: int) -> List[Dict[str, Any]]:
+        """Return history records for a movie, newest first.
+
+        Each record includes 'id', 'eventType' ('grabbed', 'downloadFolderImported',
+        etc.), 'sourceTitle' (the release name), and 'downloadId'.
+        """
+        try:
+            resp = requests.get(
+                f"{self.url}/api/v3/history/movie",
+                headers=self.headers,
+                params={"movieId": movie_id},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            records = resp.json()
+            # Sort newest first by date field if present.
+            records.sort(key=lambda r: r.get("date", ""), reverse=True)
+            return records
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f"Failed to fetch history for movie {movie_id}: {e}")
+
+    def mark_history_failed(self, history_id: int):
+        """Mark a history record as failed.
+
+        This simultaneously:
+        1. Adds the release to Radarr's blocklist so it is never grabbed again.
+        2. Triggers an automatic re-search for a *different* release.
+
+        Use this for 'bad source' files where re-downloading the same release
+        would just produce the same broken file.  Pass the 'id' of the most
+        recent 'grabbed' history record for the movie.
+        """
+        try:
+            resp = requests.post(
+                f"{self.url}/api/v3/history/failed/{history_id}",
+                headers=self.headers,
+                timeout=15,
+            )
+            resp.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f"Failed to mark history {history_id} as failed: {e}")
+
     def wait_for_command(self, cmd_id: int, timeout: int = 300, interval: int = 2) -> bool:
         """Poll command status until complete. Returns True if successful."""
         max_polls = timeout // interval

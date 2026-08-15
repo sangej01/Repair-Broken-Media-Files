@@ -1136,8 +1136,12 @@ class MainWindow(QMainWindow):
             worker.cancel()
 
     def _finish_batch_inspect(self):
-        """Called when the batch queue is empty (or cancelled).  Closes the
-        progress dialog and shows the grouped summary.
+        """Called when the batch queue is empty (or cancelled).
+
+        For DEFINITIVE results, act immediately:
+          - fixable=True  → Delete + Re-search (same release is fine).
+          - fixable=False → Delete + Blocklist + search for a DIFFERENT release.
+        Only inconclusive and error results go to the summary dialog.
         """
         self._batch_inspect_running = False
 
@@ -1154,10 +1158,10 @@ class MainWindow(QMainWindow):
             return
 
         # Group results.
-        fixable_entries = []   # fixable is True
-        bad_source = []        # fixable is False
-        inconclusive = []      # fixable is None, no error
-        errors = []            # error flag
+        fixable_entries = []   # fixable is True  → re-download (same release ok)
+        bad_source = []        # fixable is False → blocklist + different release
+        inconclusive = []      # fixable is None, no error → needs human decision
+        errors = []            # inspect failed
 
         for (name, diag, fixable, is_error) in results:
             if is_error:
@@ -1168,6 +1172,37 @@ class MainWindow(QMainWindow):
                 bad_source.append((name, diag))
             else:
                 inconclusive.append((name, diag))
+
+        # Build folder-path lookup for all DB rows (by folder name).
+        all_files = db.get_files(self._db_conn) if self._db_conn else []
+        file_by_name = {Path(f["folder_path"]).name: f["folder_path"] for f in all_files}
+
+        def _paths_for(entries):
+            paths = []
+            for name, _ in entries:
+                p = file_by_name.get(name)
+                if p:
+                    paths.append(p)
+            return paths
+
+        # --- Act on definitive results immediately ---
+
+        fixable_paths = _paths_for(fixable_entries)
+        bad_source_paths = _paths_for(bad_source)
+
+        # Fire off bad-source blocklist remediation first (non-blocking confirm).
+        if bad_source_paths:
+            self._remediate_paths(bad_source_paths, source="class-b-badsource", blocklist=True)
+
+        # Fire off fixable re-search (will queue if remediation already started —
+        # _remediate_paths guards against concurrent runs and shows a message).
+        if fixable_paths:
+            self._remediate_paths(fixable_paths, source="class-b-fixable", blocklist=False)
+
+        # --- Show summary only for things that need a human decision ---
+        undecided = inconclusive + errors
+        if not undecided and not bad_source_paths and not fixable_paths:
+            return  # nothing to show
 
         lines = [f"Batch Deep Inspect — {len(results)} file(s) inspected\n"]
 
@@ -1180,31 +1215,23 @@ class MainWindow(QMainWindow):
                 lines.append(f"  • {name}")
                 lines.append(f"      {diag}")
 
-        _section("Truncated / re-downloadable  [fixable]", fixable_entries)
-        _section("Bad source — different release needed  [not fixable]", bad_source)
-        _section("Inconclusive", inconclusive)
-        _section("Errors", errors)
+        if fixable_entries:
+            _section(
+                "Truncated / re-downloadable [fixable] — remediation queued above",
+                fixable_entries,
+            )
+        if bad_source:
+            _section(
+                "Bad source — blocklist + different-release search queued above",
+                bad_source,
+            )
+        if inconclusive:
+            _section("Inconclusive — needs manual review", inconclusive)
+        if errors:
+            _section("Errors — inspect could not run", errors)
 
         summary_text = "\n".join(lines)
-
-        # Offer "Re-search the fixable ones" only if there are any.
-        actions = []
-        if fixable_entries:
-            fixable_paths = []
-            all_files = db.get_files(self._db_conn) if self._db_conn else []
-            file_by_name = {Path(f["folder_path"]).name: f["folder_path"] for f in all_files}
-            for name, _ in fixable_entries:
-                p = file_by_name.get(name)
-                if p:
-                    fixable_paths.append(p)
-            if fixable_paths:
-                actions.append((
-                    f"Re-search the fixable ones ({len(fixable_paths)})",
-                    lambda fp=fixable_paths: self._remediate_paths(fp, source="class-b-fixable"),
-                    True,  # primary
-                ))
-
-        self._show_text_dialog("Batch Deep Inspect — Group B Summary", summary_text, actions=actions)
+        self._show_text_dialog("Batch Deep Inspect — Group B Summary", summary_text)
 
     @Slot()
     def _apply_filter(self):
@@ -2701,7 +2728,7 @@ class MainWindow(QMainWindow):
         folder_paths = [f["folder_path"] for f in queued]
         self._remediate_paths(folder_paths, source="queued")
 
-    def _remediate_paths(self, folder_paths: list, source: str = "selected"):
+    def _remediate_paths(self, folder_paths: list, source: str = "selected", blocklist: bool = False):
         """Confirm, then delete + Radarr re-search the given folder path(s).
 
         Shared by the "Delete + Re-search" button (checked rows or the QUEUED
@@ -2711,6 +2738,11 @@ class MainWindow(QMainWindow):
         "selected"), so the confirmation dialog can spell out WHY these movies
         were chosen — the key fix for the "it picked a movie I never selected"
         surprise.
+
+        `blocklist=True` uses the history/failed path: Radarr blocklists the
+        bad release and searches for a *different* release.  Use this for
+        Group B bad-source files.  `blocklist=False` (default) does the normal
+        delete + re-search for the same release.
         """
         from radarr import RadarrClient
         from app.workers import RemediateWorker
@@ -2731,6 +2763,7 @@ class MainWindow(QMainWindow):
             "queued": "files already in the QUEUED state (nothing was checked)",
             "class-a": "Group A (re-download friendly) files",
             "class-b-fixable": "Group B files that deep-inspect confirmed are re-downloadable",
+            "class-b-badsource": "Group B files confirmed as bad source (will blocklist + search for different release)",
         }.get(source, "your selection")
 
         names = [Path(p).name for p in folder_paths]
@@ -2739,14 +2772,25 @@ class MainWindow(QMainWindow):
         if len(names) > 15:
             shown += f"\n  ... and {len(names) - 15} more"
 
+        if blocklist:
+            action_desc = (
+                "1. DELETE the file(s) above from disk\n"
+                "2. Blocklist the bad release in Radarr (so it won't be grabbed again)\n"
+                "3. Tell Radarr to search for a DIFFERENT release"
+            )
+        else:
+            action_desc = (
+                "1. DELETE the file(s) above from disk\n"
+                "2. Tell Radarr to re-search for a fresh download"
+            )
+
         reply = QMessageBox.question(
             self,
             "Confirm Remediation",
             f"About to remediate {len(folder_paths)} file(s) from {origin}:\n\n"
             f"{shown}\n\n"
             f"This will:\n"
-            f"1. DELETE the file(s) above from disk\n"
-            f"2. Tell Radarr to re-search for a fresh download\n\n"
+            f"{action_desc}\n\n"
             f"Continue?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,  # default to No — this is destructive
@@ -2769,6 +2813,7 @@ class MainWindow(QMainWindow):
             radarr_client=radarr,
             dry_run=False,
             max_batch=None,
+            blocklist=blocklist,
         )
         self._remediate_worker.step.connect(self._on_remediate_step)
         self._remediate_worker.finished.connect(self._on_remediate_finished)
