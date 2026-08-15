@@ -374,7 +374,29 @@ class MainWindow(QMainWindow):
         self._remed_combo.currentTextChanged.connect(self._apply_filter)
         self._remed_combo.setFixedWidth(120)
         filter_row.addWidget(self._remed_combo)
-        
+
+        filter_row.addSpacing(16)
+        _corrupt_class_tip = (
+            "Filter CORRUPT files by triage class:\n"
+            "  A (re-download) — truncated/missing frames; a fresh download will fix it.\n"
+            "  B (source damage) — broken container or encoder artifact from the source;\n"
+            "    re-downloading the same release won't help.\n"
+            "  Unclassified — CORRUPT but no rule matched the error signature.\n\n"
+            "Select A or B to enable the context batch button at the bottom."
+        )
+        _corrupt_class_lbl = QLabel("Corruption type:")
+        _corrupt_class_lbl.setToolTip(_corrupt_class_tip)
+        filter_row.addWidget(_corrupt_class_lbl)
+        self._corrupt_class_combo = QComboBox()
+        self._corrupt_class_combo.setToolTip(_corrupt_class_tip)
+        self._corrupt_class_combo.addItems(list(CORRUPT_CLASS_LABELS.keys()))
+        self._corrupt_class_combo.setFixedWidth(150)
+        self._corrupt_class_combo.currentTextChanged.connect(self._apply_filter)
+        self._corrupt_class_combo.currentTextChanged.connect(
+            lambda _: self._update_batch_class_button()
+        )
+        filter_row.addWidget(self._corrupt_class_combo)
+
         filter_row.addSpacing(16)
         filter_row.addWidget(QLabel("Search:"))
         self._search_box = QLineEdit()
@@ -550,7 +572,19 @@ class MainWindow(QMainWindow):
         )
         self._remediate_btn.clicked.connect(self._remediate_queued)
         action_row.addWidget(self._remediate_btn)
-        
+
+        self._batch_class_btn = QPushButton("Re-search all Group A")
+        self._batch_class_btn.setToolTip(
+            "Context-sensitive batch action for the selected Corruption type:\n"
+            "  A → Delete + Re-search all Group A targets (confirm first).\n"
+            "  B → Deep Inspect all Group B targets sequentially, then show a summary.\n"
+            "Select 'A (re-download)' or 'B (source damage)' in the Corruption type\n"
+            "filter to enable this button."
+        )
+        self._batch_class_btn.setEnabled(False)
+        self._batch_class_btn.clicked.connect(self._batch_class_action)
+        action_row.addWidget(self._batch_class_btn)
+
         self._open_folder_btn = QPushButton("Open Folder")
         self._open_folder_btn.clicked.connect(self._open_folder)
         action_row.addWidget(self._open_folder_btn)
@@ -610,6 +644,11 @@ class MainWindow(QMainWindow):
             filter_state = status_choice
         filter_remed = None if self._remed_combo.currentText() == "Any" else self._remed_combo.currentText()
         search = self._search_box.text().lower()
+        # Corruption-class filter is client-side (class is computed on the fly
+        # from stderr_tail; no DB column). Selecting a class implies CORRUPT, so
+        # an AND-narrow on top of whatever Status yields is intentional — if the
+        # Status combo already excludes CORRUPT the result is simply empty.
+        selected_class = CORRUPT_CLASS_LABELS.get(self._corrupt_class_combo.currentText())
         
         if self._view_mode == "live":
             # In live mode: only show files scanned in CURRENT scan session
@@ -633,7 +672,11 @@ class MainWindow(QMainWindow):
         # Narrow to the problematic scan states when that shortcut is selected.
         if problematic_mode:
             files = [f for f in files if f.get("scan_state") in PROBLEMATIC_STATES]
-        
+
+        # Narrow by corruption class when the combo is set to A, B, or Unclassified.
+        if selected_class is not None:
+            files = [f for f in files if corruption_class(f) == selected_class]
+
         # Apply search filter (works in both modes)
         if search:
             files = [f for f in files if search in Path(f["folder_path"]).name.lower()]
@@ -649,9 +692,12 @@ class MainWindow(QMainWindow):
         
         # Honor the Hide/Show Skipped toggle on the freshly-built rows.
         self._apply_skipped_visibility()
-        
+
         # Update status counts
         self._update_status_counts()
+
+        # Sync batch-class button label/enabled with current filter selection.
+        self._update_batch_class_button()
     
     def _update_status_counts(self):
         """Update the status label with counts from database."""
@@ -878,11 +924,293 @@ class MainWindow(QMainWindow):
             remed = remed_item.text() if remed_item else ""
             self._table.setRowHidden(row, hide and remed == "SKIPPED")
 
+    # ------------------------------------------------------------------ #
+    #  Corruption-class filter helpers (Tasks 4-8)                        #
+    # ------------------------------------------------------------------ #
+
+    def _class_targets(self, class_code: str) -> list:
+        """Return folder paths for the batch-class action.
+
+        Checked visible rows are used if any are checked (intersected with
+        class_code so stray non-class checks are silently ignored). When
+        nothing is checked, fall back to ALL currently-visible rows of
+        that class.
+        """
+        # Build a quick lookup: folder_path -> file_dict for all DB rows so
+        # corruption_class() has stderr_tail available.
+        all_files = db.get_files(self._db_conn) if self._db_conn else []
+        file_by_path = {f["folder_path"]: f for f in all_files}
+
+        def _is_class(folder_path: str) -> bool:
+            return corruption_class(file_by_path.get(folder_path, {})) == class_code
+
+        # Checked visible rows (if any).
+        checked = self._checked_folder_paths()
+        checked_class = [p for p in checked if _is_class(p)]
+        if checked_class:
+            return checked_class
+
+        # Fallback: all visible (non-hidden) rows of this class.
+        targets = []
+        for row in range(self._table.rowCount()):
+            if self._table.isRowHidden(row):
+                continue
+            item = self._table.item(row, COL_FOLDER)
+            if item is None:
+                continue
+            folder_path = item.data(Qt.ItemDataRole.UserRole)
+            if folder_path and _is_class(folder_path):
+                targets.append(folder_path)
+        return targets
+
+    def _update_batch_class_button(self):
+        """Sync label and enabled-state of _batch_class_btn with the current
+        Corruption type combo selection.  Called from filter change and
+        _refresh_table so the button always reflects what's on screen.
+        """
+        if not hasattr(self, "_batch_class_btn"):
+            return  # UI not built yet
+        selected_class = CORRUPT_CLASS_LABELS.get(self._corrupt_class_combo.currentText())
+        if selected_class == CLASS_A:
+            self._batch_class_btn.setText("Re-search all Group A")
+            self._batch_class_btn.setToolTip(
+                "Delete + Re-search every visible Group A (re-download friendly) "
+                "CORRUPT file.\nChecked rows take priority over all visible rows."
+            )
+            self._batch_class_btn.setEnabled(True)
+        elif selected_class == CLASS_B:
+            self._batch_class_btn.setText("Inspect all Group B")
+            self._batch_class_btn.setToolTip(
+                "Run Deep Inspect sequentially on every visible Group B (source "
+                "damage) CORRUPT file, then show a grouped summary.\n"
+                "Checked rows take priority over all visible rows."
+            )
+            self._batch_class_btn.setEnabled(True)
+        else:
+            self._batch_class_btn.setText("Re-search all Group A")
+            self._batch_class_btn.setToolTip(
+                "Select 'A (re-download)' or 'B (source damage)' in the "
+                "Corruption type filter to enable this button."
+            )
+            self._batch_class_btn.setEnabled(False)
+
+    @Slot()
+    def _batch_class_action(self):
+        """Dispatch the context batch action for the selected corruption class."""
+        selected_class = CORRUPT_CLASS_LABELS.get(self._corrupt_class_combo.currentText())
+        if selected_class == CLASS_A:
+            paths = self._class_targets(CLASS_A)
+            if not paths:
+                QMessageBox.information(
+                    self, "No Targets",
+                    "No Group A (re-download friendly) files found in the current view."
+                )
+                return
+            self._remediate_paths(paths, source="class-a")
+        elif selected_class == CLASS_B:
+            paths = self._class_targets(CLASS_B)
+            if not paths:
+                QMessageBox.information(
+                    self, "No Targets",
+                    "No Group B (source damage) files found in the current view."
+                )
+                return
+            self._start_batch_inspect(paths)
+
+    # ------------------------------------------------------------------ #
+    #  Class B — sequential batch Deep Inspect (Task 7)                   #
+    # ------------------------------------------------------------------ #
+
+    def _start_batch_inspect(self, folder_paths: list):
+        """Start a sequential Deep Inspect pass over *folder_paths*.
+
+        Runs one InspectWorker at a time to stay within the single-worker
+        contract.  A QProgressDialog lets the user cancel mid-batch.
+        """
+        from app.workers import InspectWorker
+        from PySide6.QtWidgets import QProgressDialog
+        from PySide6.QtCore import Qt as _Qt
+
+        # Guard: don't start if a single right-click inspect is running.
+        if getattr(self, "_inspect_worker", None) and self._inspect_worker.isRunning():
+            QMessageBox.information(
+                self, "Inspection Running",
+                "A deep inspection is already in progress. "
+                "Wait for it to finish or cancel it first."
+            )
+            return
+        # Guard: don't nest batch inspections.
+        if getattr(self, "_batch_inspect_running", False):
+            QMessageBox.information(
+                self, "Batch Inspection Running",
+                "A batch inspection is already in progress."
+            )
+            return
+
+        self._batch_inspect_running = True
+        self._batch_inspect_queue = list(folder_paths)
+        self._batch_inspect_results = []   # list of (folder_name, diagnosis, fixable, error)
+        self._batch_inspect_total = len(folder_paths)
+
+        self._batch_inspect_dialog = QProgressDialog(
+            "Starting batch inspection…", "Cancel",
+            0, self._batch_inspect_total, self
+        )
+        self._batch_inspect_dialog.setWindowTitle("Inspect all Group B")
+        self._batch_inspect_dialog.setWindowModality(_Qt.WindowModality.WindowModal)
+        self._batch_inspect_dialog.setAutoClose(False)
+        self._batch_inspect_dialog.setAutoReset(False)
+        self._batch_inspect_dialog.setMinimumDuration(0)
+        self._batch_inspect_dialog.setValue(0)
+        self._batch_inspect_dialog.canceled.connect(self._cancel_batch_inspect)
+
+        self._batch_class_btn.setEnabled(False)
+        self._batch_inspect_next()
+
+    def _batch_inspect_next(self):
+        """Pop the next folder from the queue and start an InspectWorker for it."""
+        from app.workers import InspectWorker
+
+        done = self._batch_inspect_total - len(self._batch_inspect_queue)
+
+        # Queue exhausted or dialog was closed (cancelled).
+        if not self._batch_inspect_queue or not getattr(self, "_batch_inspect_running", False):
+            self._finish_batch_inspect()
+            return
+
+        folder_path = self._batch_inspect_queue.pop(0)
+        folder_name = Path(folder_path).name
+
+        # Update progress dialog.
+        dlg = getattr(self, "_batch_inspect_dialog", None)
+        if dlg:
+            dlg.setValue(done)
+            dlg.setLabelText(
+                f"Inspecting {done + 1} / {self._batch_inspect_total}:\n{folder_name}"
+            )
+
+        # Resolve video path (same logic as _deep_inspect).
+        video_path = None
+        if self._db_conn:
+            all_files = db.get_files(self._db_conn)
+            record = next((f for f in all_files if f["folder_path"] == folder_path), None)
+            if record:
+                video_path = record.get("video_path")
+        if not video_path or not Path(video_path).exists():
+            found = scanner.largest_video_in_folder(Path(folder_path))
+            video_path = str(found) if found else None
+
+        if not video_path:
+            self._batch_inspect_results.append(
+                (folder_name, "Could not locate a video file", None, True)
+            )
+            self._batch_inspect_next()
+            return
+
+        # Start the worker; on finished/error, advance to the next item.
+        worker = InspectWorker(video_path)
+        self._inspect_worker = worker  # reuse the single-inspect guard slot
+
+        def _on_done(result):
+            diag = result.get("diagnosis") or result.get("summary") or "No diagnosis"
+            fixable = result.get("fixable")
+            self._batch_inspect_results.append((folder_name, diag, fixable, False))
+            self._inspect_worker = None
+            self._batch_inspect_next()
+
+        def _on_err(msg):
+            self._batch_inspect_results.append((folder_name, f"Error: {msg}", None, True))
+            self._inspect_worker = None
+            self._batch_inspect_next()
+
+        worker.finished.connect(_on_done)
+        worker.error.connect(_on_err)
+        worker.start()
+
+    def _cancel_batch_inspect(self):
+        """Cancel the running batch inspection (called when user hits Cancel)."""
+        self._batch_inspect_running = False
+        self._batch_inspect_queue = []
+        worker = getattr(self, "_inspect_worker", None)
+        if worker and worker.isRunning():
+            worker.cancel()
+
+    def _finish_batch_inspect(self):
+        """Called when the batch queue is empty (or cancelled).  Closes the
+        progress dialog and shows the grouped summary.
+        """
+        self._batch_inspect_running = False
+
+        dlg = getattr(self, "_batch_inspect_dialog", None)
+        if dlg:
+            dlg.reset()
+            dlg.deleteLater()
+            self._batch_inspect_dialog = None
+
+        self._update_batch_class_button()  # re-enable if appropriate
+
+        results = getattr(self, "_batch_inspect_results", [])
+        if not results:
+            return
+
+        # Group results.
+        fixable_entries = []   # fixable is True
+        bad_source = []        # fixable is False
+        inconclusive = []      # fixable is None, no error
+        errors = []            # error flag
+
+        for (name, diag, fixable, is_error) in results:
+            if is_error:
+                errors.append((name, diag))
+            elif fixable is True:
+                fixable_entries.append((name, diag))
+            elif fixable is False:
+                bad_source.append((name, diag))
+            else:
+                inconclusive.append((name, diag))
+
+        lines = [f"Batch Deep Inspect — {len(results)} file(s) inspected\n"]
+
+        def _section(header, entries):
+            if not entries:
+                return
+            lines.append(f"\n{'─' * 50}")
+            lines.append(f"{header} ({len(entries)})")
+            for name, diag in entries:
+                lines.append(f"  • {name}")
+                lines.append(f"      {diag}")
+
+        _section("Truncated / re-downloadable  [fixable]", fixable_entries)
+        _section("Bad source — different release needed  [not fixable]", bad_source)
+        _section("Inconclusive", inconclusive)
+        _section("Errors", errors)
+
+        summary_text = "\n".join(lines)
+
+        # Offer "Re-search the fixable ones" only if there are any.
+        actions = []
+        if fixable_entries:
+            fixable_paths = []
+            all_files = db.get_files(self._db_conn) if self._db_conn else []
+            file_by_name = {Path(f["folder_path"]).name: f["folder_path"] for f in all_files}
+            for name, _ in fixable_entries:
+                p = file_by_name.get(name)
+                if p:
+                    fixable_paths.append(p)
+            if fixable_paths:
+                actions.append((
+                    f"Re-search the fixable ones ({len(fixable_paths)})",
+                    lambda fp=fixable_paths: self._remediate_paths(fp, source="class-b-fixable"),
+                    True,  # primary
+                ))
+
+        self._show_text_dialog("Batch Deep Inspect — Group B Summary", summary_text, actions=actions)
+
     @Slot()
     def _apply_filter(self):
         """Apply filters to table."""
         self._refresh_table()
-    
+
     @Slot()
     def _on_view_mode_changed(self, mode: str):
         """Handle view mode change."""
@@ -968,7 +1296,7 @@ class MainWindow(QMainWindow):
         # being (re)scanned update in place as results arrive.
         self._preload_live_table(roots)
         
-        # Disable scan controls during scan (but leave action buttons enabled)
+        # Disable scan controls during scan (but leave most action buttons enabled)
         self._scan_btn.setEnabled(False)
         self._stop_btn.setEnabled(True)
         self._lib_ah.setEnabled(False)
@@ -976,6 +1304,8 @@ class MainWindow(QMainWindow):
         self._lib_tz.setEnabled(False)
         self._workers_combo.setEnabled(False)
         self._timeout_combo.setEnabled(False)
+        # Class-B batch inspect is destructive-adjacent; disable during scan.
+        self._batch_class_btn.setEnabled(False)
         
         # Reset progress bar to definite mode (no pulsing)
         self._progress_bar.setRange(0, 100)
@@ -1788,6 +2118,7 @@ class MainWindow(QMainWindow):
         self._lib_tz.setEnabled(True)
         self._workers_combo.setEnabled(True)
         self._timeout_combo.setEnabled(True)
+        self._update_batch_class_button()
         
         # Clean up worker
         if self._worker:
@@ -2398,6 +2729,8 @@ class MainWindow(QMainWindow):
         origin = {
             "checked": "the rows you checked",
             "queued": "files already in the QUEUED state (nothing was checked)",
+            "class-a": "Group A (re-download friendly) files",
+            "class-b-fixable": "Group B files that deep-inspect confirmed are re-downloadable",
         }.get(source, "your selection")
 
         names = [Path(p).name for p in folder_paths]
@@ -2444,8 +2777,9 @@ class MainWindow(QMainWindow):
         self._remediate_btn.setEnabled(False)
         self._scan_btn.setEnabled(False)
 
+        self._batch_class_btn.setEnabled(False)
         self._remediate_worker.start()
-    
+
     @Slot(str, str, str, str)
     def _on_remediate_step(self, folder_path: str, action: str, status: str, message: str):
         """Handle remediation step update."""
@@ -2457,6 +2791,7 @@ class MainWindow(QMainWindow):
         """Handle remediation completion."""
         self._remediate_btn.setEnabled(True)
         self._scan_btn.setEnabled(True)
+        self._update_batch_class_button()
         
         # Build summary message
         summary_lines = [

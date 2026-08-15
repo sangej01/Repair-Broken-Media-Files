@@ -51,6 +51,13 @@ These have **no menu item**. They act on a group:
 - **Delete + Re-search** — ⚠️ the destructive one. Acts on the **checked** rows;
   if nothing is checked, falls back to every **QUEUED** file. Always lists what
   it will delete and asks first.
+- **Re-search all Group A / Inspect all Group B** — context batch button that
+  adapts to the **Corruption type** filter combo (see below). Set the combo to
+  *A (re-download)* → button runs Delete + Re-search on all visible Group A
+  targets; set to *B (source damage)* → button runs Deep Inspect sequentially
+  on all visible Group B targets, then shows a grouped summary with an optional
+  "Re-search the fixable ones" action. Disabled when the combo is on
+  *All types* or *Unclassified*.
 - **Re-scan TIMEOUTs** — re-check every TIMEOUT file at once
 - **Check Re-downloads** — ask Radarr about all RESEARCHING files
 - **Backup DB** — snapshot the whole database
@@ -89,4 +96,4 @@ These have **no menu item**. They act on a group:
 - 👉 **Right-click** = "this movie, right here." Scalpel.
 - 🔲 **Checkboxes + buttons** = "all of these." Batch.
 - 🔬 Deep Inspect, 🚫 Skip, 🔍 Verify, 🗑️ Delete-record, 📋 Copy Path = **right-click only.**
-- 🗑️ Delete + Re-search, 🔁 Re-scan TIMEOUTs, ✅ Check Re-downloads, 💾 Backup = **buttons only.**
+- 🗑️ Delete + Re-search, 🔎 Re-search all Group A / Inspect all Group B, 🔁 Re-scan TIMEOUTs, ✅ Check Re-downloads, 💾 Backup = **buttons only.**
