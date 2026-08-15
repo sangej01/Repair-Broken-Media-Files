@@ -217,6 +217,8 @@ bytes, so use Deep Inspect on those instead of a blind re-scan.
 
 ## Documentation
 
+Prefer step-by-step checklists? See **[docs/WORKFLOW_CHECKLIST.md](docs/WORKFLOW_CHECKLIST.md)** — pick your task and follow the steps.
+
 - **[MANUAL.md](docs/MANUAL.md)** - Full user manual: paths through the app, common scenarios, and flow diagrams
 - **[INTERFACE.md](docs/INTERFACE.md)** - Tour of the window: every control explained, and the Status-vs-Remediation distinction
 - **[USERGUIDE.md](docs/USERGUIDE.md)** - Complete usage guide (step-by-step workflows, CLI commands, troubleshooting)

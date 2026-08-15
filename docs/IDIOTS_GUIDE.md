@@ -2,6 +2,8 @@
 
 You found a bad movie. This tells you what to do. Follow the steps. Don't think too hard.
 
+Prefer a task-by-task checklist? See **[WORKFLOW_CHECKLIST.md](WORKFLOW_CHECKLIST.md)**.
+
 ---
 
 ## The 10-second version
