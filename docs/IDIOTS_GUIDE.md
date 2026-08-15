@@ -112,7 +112,7 @@ If the Reason says any of these:
 | **Backup DB** | Saves a copy of your results. (Also happens automatically when you close.) |
 | **Check Re-downloads** | Asks Radarr which new copies have arrived. |
 | **Queue for Remediation** | Marks ticked files to fix later (doesn't fix them yet). |
-| **Delete + Re-search** | ⚠️ **The big one.** Deletes the bad file and tells Radarr to get a new one. |
+| **Delete + Re-search** | ⚠️ **The big one.** Deletes the bad file and tells Radarr to get a new one. Acts on **checked** rows; if nothing is checked, falls back to the **QUEUED** files. It lists what it will delete and asks first. |
 | **Open Folder** | Opens the movie's folder in Windows. |
 | **Show ffmpeg Log** | Shows the full error + a plain-English diagnosis. |
 
@@ -127,6 +127,23 @@ If the Reason says any of these:
 - **🔍 Verify Folder Exists** — did someone delete/move the folder?
 - **🗑️ Delete from SQLite Database** — removes the ROW ONLY. **Does NOT touch your movie file.** Just makes the app forget it.
 - **📋 Copy Path**
+
+---
+
+## Right-click vs. Buttons (which do I use?)
+
+Dead simple:
+
+- 👉 **Right-click a row** = do it to **THIS one movie** (the row you clicked).
+- 🔲 **Checkboxes + bottom buttons** = do it to **a whole batch** (all checked, or a whole group like all TIMEOUTs).
+
+Some things live in **only one** place:
+
+- **Right-click only:** 🔬 Deep Inspect, 🚫 Mark as Skipped, 🔍 Verify Folder Exists, 🗑️ Delete from SQLite Database, 📋 Copy Path.
+- **Buttons only:** 🗑️ Delete + Re-search, 🔁 Re-scan TIMEOUTs, ✅ Check Re-downloads, 💾 Backup DB.
+
+> Want the full breakdown (every action, both places, when to use which)?
+> See **[ACTIONS_MENU_vs_BUTTONS.md](ACTIONS_MENU_vs_BUTTONS.md)**.
 
 ---
 

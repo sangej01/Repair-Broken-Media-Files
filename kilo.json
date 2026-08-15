@@ -1,0 +1,27 @@
+{
+  "$schema": "https://app.kilo.ai/config.json",
+  "permission": {
+    "read": "allow",
+    "glob": "allow",
+    "grep": "allow",
+    "list": "allow",
+    "lsp": "allow",
+    "todowrite": "allow",
+    "todoread": "allow",
+    "skill": "allow",
+    "webfetch": "allow",
+    "websearch": "allow",
+    "kilo_memory_recall": "allow",
+    "edit": {
+      "**": "allow"
+    },
+    "bash": {
+      "git push*": "ask",
+      "git reset --hard*": "ask",
+      "git clean*": "ask",
+      "*rm -rf*": "ask",
+      "*Remove-Item*": "ask",
+      "*": "allow"
+    }
+  }
+}

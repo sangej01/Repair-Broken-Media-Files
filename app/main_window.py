@@ -73,6 +73,28 @@ HEADERS = ["", "Folder", "Size", "Status", "Reason", "Remediation", "Attempts"]
 PROBLEMATIC_FILTER_LABEL = "Problematic"
 PROBLEMATIC_STATES = {"TIMEOUT", "UNKNOWN", "ERROR"}
 
+# Corruption triage classes (a sub-classification of CORRUPT files only):
+#   A  = re-download friendly  (triage fixable is True)  — truncated, missing
+#        frames, concealed, no-frame, generic corruption. A fresh copy usually
+#        fixes it → recommended action is Delete + Re-search.
+#   B  = likely source damage  (triage fixable is False) — broken container,
+#        encoder artifact, malformed packet, timestamp problems. A re-download
+#        of the SAME release probably won't help → recommended action is a
+#        Deep Inspect before deciding.
+#   U  = unclassified          (triage_corruption() returned None) — CORRUPT but
+#        the reason matched no known signature. Never auto-acted on.
+CLASS_A = "A"
+CLASS_B = "B"
+CLASS_UNCLASSIFIED = "U"
+
+# Filter-combo labels → class code (None = "All types", no class narrowing).
+CORRUPT_CLASS_LABELS = {
+    "All types": None,
+    "A (re-download)": CLASS_A,
+    "B (source damage)": CLASS_B,
+    "Unclassified": CLASS_UNCLASSIFIED,
+}
+
 # Remediation states meaning the original file has been deleted and a fresh
 # download requested from Radarr. Rows in these states are shown grayed-out and
 # italicized: the listed original is gone / being replaced.
@@ -101,6 +123,22 @@ def _size_display(size_bytes: int) -> str:
     if size_bytes >= 1_048_576:
         return f"{size_bytes / 1_048_576:.0f}M"
     return f"{size_bytes / 1024:.0f}K"
+
+
+def corruption_class(file_dict: dict):
+    """Return the triage class (CLASS_A / CLASS_B / CLASS_UNCLASSIFIED) for a
+    CORRUPT file, or None for non-CORRUPT rows.
+
+    The class is derived on the fly from the stored ffmpeg reason via
+    scanner.triage_corruption() — there is no persisted triage column. A reason
+    that matches no known signature is CLASS_UNCLASSIFIED (never auto-acted on).
+    """
+    if (file_dict.get("scan_state") or "") != "CORRUPT":
+        return None
+    triage = scanner.triage_corruption(file_dict.get("stderr_tail") or "")
+    if triage is None:
+        return CLASS_UNCLASSIFIED
+    return CLASS_A if triage.get("fixable") else CLASS_B
 
 
 # Per-file ffmpeg timeout options (label -> seconds; 0 means no limit)
@@ -503,6 +541,13 @@ class MainWindow(QMainWindow):
         
         self._remediate_btn = QPushButton("Delete + Re-search")
         self._remediate_btn.setObjectName("danger")
+        self._remediate_btn.setToolTip(
+            "Delete the movie file(s) and ask Radarr for a fresh download.\n\n"
+            "Acts on the CHECKED rows if any are ticked. If nothing is ticked, "
+            "it falls back to every file already in the QUEUED state.\n"
+            "Either way, it lists exactly what will be deleted and asks you to "
+            "confirm first."
+        )
         self._remediate_btn.clicked.connect(self._remediate_queued)
         action_row.addWidget(self._remediate_btn)
         
@@ -2297,19 +2342,44 @@ class MainWindow(QMainWindow):
     
     @Slot()
     def _remediate_queued(self):
-        """Execute remediation on all QUEUED files."""
+        """Execute remediation on the checked rows, or the QUEUED set.
+
+        Targeting rules (chosen to eliminate the "it deleted a movie I never
+        selected" surprise):
+          * If any rows are CHECKED, act on exactly those — what you see ticked
+            is what gets deleted.
+          * If NOTHING is checked, fall back to every file already in the
+            QUEUED remediation state (the historical behavior).
+        Either way, the confirmation dialog names the movies and states WHERE
+        the list came from, so the target is never invisible.
+        """
+        checked = self._checked_folder_paths()
+        if checked:
+            self._remediate_paths(checked, source="checked")
+            return
+
         queued = db.get_files(self._db_conn, filter_remediation="QUEUED")
         if not queued:
-            QMessageBox.warning(self, "No Files Queued", "No files are queued for remediation")
+            QMessageBox.warning(
+                self, "Nothing to Remediate",
+                "No rows are checked and no files are in the QUEUED state.\n\n"
+                "Tick the checkbox on the movies you want to fix (or use "
+                "'Queue for Remediation'), then try again.",
+            )
             return
         folder_paths = [f["folder_path"] for f in queued]
-        self._remediate_paths(folder_paths)
+        self._remediate_paths(folder_paths, source="queued")
 
-    def _remediate_paths(self, folder_paths: list):
+    def _remediate_paths(self, folder_paths: list, source: str = "selected"):
         """Confirm, then delete + Radarr re-search the given folder path(s).
 
-        Shared by the "Delete + Re-search" button (whole QUEUED set) and by the
-        one-click action offered from a deep-inspect diagnosis.
+        Shared by the "Delete + Re-search" button (checked rows or the QUEUED
+        set) and by the one-click action offered from a deep-inspect diagnosis.
+
+        `source` describes where the list came from ("checked", "queued", or
+        "selected"), so the confirmation dialog can spell out WHY these movies
+        were chosen — the key fix for the "it picked a movie I never selected"
+        surprise.
         """
         from radarr import RadarrClient
         from app.workers import RemediateWorker
@@ -2324,18 +2394,29 @@ class MainWindow(QMainWindow):
             )
             return
 
-        if len(folder_paths) == 1:
-            detail = f"'{Path(folder_paths[0]).name}'"
-        else:
-            detail = f"{len(folder_paths)} file(s)"
+        # Explain where this list came from so the target is never a surprise.
+        origin = {
+            "checked": "the rows you checked",
+            "queued": "files already in the QUEUED state (nothing was checked)",
+        }.get(source, "your selection")
+
+        names = [Path(p).name for p in folder_paths]
+        # Show the actual movies (cap the list so a huge queue stays readable).
+        shown = "\n".join(f"  • {n}" for n in names[:15])
+        if len(names) > 15:
+            shown += f"\n  ... and {len(names) - 15} more"
+
         reply = QMessageBox.question(
             self,
             "Confirm Remediation",
+            f"About to remediate {len(folder_paths)} file(s) from {origin}:\n\n"
+            f"{shown}\n\n"
             f"This will:\n"
-            f"1. Delete {detail} from disk\n"
+            f"1. DELETE the file(s) above from disk\n"
             f"2. Tell Radarr to re-search for a fresh download\n\n"
             f"Continue?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,  # default to No — this is destructive
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
