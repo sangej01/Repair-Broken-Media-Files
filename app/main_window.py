@@ -9,6 +9,8 @@ from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QFrame,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -518,36 +520,41 @@ class MainWindow(QMainWindow):
         
         layout.addLayout(status_row)
         
-        # --- Action buttons row ---
-        action_row = QHBoxLayout()
-        action_row.setSpacing(8)
-        
+        # --- Action buttons: 2-row grid panel ---
+        # Row 0 (utilities + scan + housekeeping):
+        #   Select All | Select None  |sep|  Re-scan TIMEOUTs | Check Re-downloads | Backup DB  |sep|  Open Folder | Show ffmpeg Log
+        # Row 1 (remediation — full width):
+        #   Queue for Remediation | Delete + Re-search | Re-search all Group A/B
+        btn_panel = QWidget()
+        btn_grid = QGridLayout(btn_panel)
+        btn_grid.setSpacing(6)
+        btn_grid.setContentsMargins(0, 4, 0, 4)
+
+        # --- Row 0: utility buttons ---
         self._select_all_btn = QPushButton("Select All")
         self._select_all_btn.clicked.connect(self._select_all)
-        action_row.addWidget(self._select_all_btn)
-        
+        btn_grid.addWidget(self._select_all_btn, 0, 0)
+
         self._select_none_btn = QPushButton("Select None")
         self._select_none_btn.clicked.connect(self._select_none)
-        action_row.addWidget(self._select_none_btn)
-        
-        action_row.addStretch()
-        
+        btn_grid.addWidget(self._select_none_btn, 0, 1)
+
+        def _vsep():
+            f = QFrame()
+            f.setFrameShape(QFrame.Shape.VLine)
+            f.setFrameShadow(QFrame.Shadow.Sunken)
+            return f
+
+        btn_grid.addWidget(_vsep(), 0, 2)
+
         self._rescan_timeouts_btn = QPushButton("Re-scan TIMEOUTs")
         self._rescan_timeouts_btn.setToolTip(
             "Re-scan every file currently in TIMEOUT state. Most TIMEOUTs are "
             "transient NAS I/O stalls and come back CLEAN on a fresh scan."
         )
         self._rescan_timeouts_btn.clicked.connect(self._rescan_timeouts)
-        action_row.addWidget(self._rescan_timeouts_btn)
-        
-        self._backup_btn = QPushButton("Backup DB")
-        self._backup_btn.setToolTip(
-            "Save a timestamped snapshot of the database to the backup folder "
-            "(also happens automatically on exit)."
-        )
-        self._backup_btn.clicked.connect(self._backup_db_now)
-        action_row.addWidget(self._backup_btn)
-        
+        btn_grid.addWidget(self._rescan_timeouts_btn, 0, 3)
+
         self._check_redl_btn = QPushButton("Check Re-downloads")
         self._check_redl_btn.setToolTip(
             "Ask Radarr which RESEARCHING movies have finished re-downloading "
@@ -555,12 +562,34 @@ class MainWindow(QMainWindow):
             "so you know what's ready to re-scan without opening Radarr."
         )
         self._check_redl_btn.clicked.connect(self._check_redownloads)
-        action_row.addWidget(self._check_redl_btn)
-        
+        btn_grid.addWidget(self._check_redl_btn, 0, 4)
+
+        self._backup_btn = QPushButton("Backup DB")
+        self._backup_btn.setToolTip(
+            "Save a timestamped snapshot of the database to the backup folder "
+            "(also happens automatically on exit)."
+        )
+        self._backup_btn.clicked.connect(self._backup_db_now)
+        btn_grid.addWidget(self._backup_btn, 0, 5)
+
+        btn_grid.addWidget(_vsep(), 0, 6)
+
+        self._open_folder_btn = QPushButton("Open Folder")
+        self._open_folder_btn.clicked.connect(self._open_folder)
+        btn_grid.addWidget(self._open_folder_btn, 0, 7)
+
+        self._show_log_btn = QPushButton("Show ffmpeg Log")
+        self._show_log_btn.clicked.connect(self._show_log)
+        btn_grid.addWidget(self._show_log_btn, 0, 8)
+
+        # Spacer column pushes utility buttons left, remediation buttons span full width
+        btn_grid.setColumnStretch(9, 1)
+
+        # --- Row 1: remediation buttons (span all columns) ---
         self._queue_btn = QPushButton("Queue for Remediation")
         self._queue_btn.clicked.connect(self._queue_selected)
-        action_row.addWidget(self._queue_btn)
-        
+        btn_grid.addWidget(self._queue_btn, 1, 0, 1, 3)
+
         self._remediate_btn = QPushButton("Delete + Re-search")
         self._remediate_btn.setObjectName("danger")
         self._remediate_btn.setToolTip(
@@ -571,7 +600,7 @@ class MainWindow(QMainWindow):
             "confirm first."
         )
         self._remediate_btn.clicked.connect(self._remediate_queued)
-        action_row.addWidget(self._remediate_btn)
+        btn_grid.addWidget(self._remediate_btn, 1, 3, 1, 3)
 
         self._batch_class_btn = QPushButton("Re-search all Group A")
         self._batch_class_btn.setToolTip(
@@ -583,17 +612,9 @@ class MainWindow(QMainWindow):
         )
         self._batch_class_btn.setEnabled(False)
         self._batch_class_btn.clicked.connect(self._batch_class_action)
-        action_row.addWidget(self._batch_class_btn)
+        btn_grid.addWidget(self._batch_class_btn, 1, 6, 1, 4)
 
-        self._open_folder_btn = QPushButton("Open Folder")
-        self._open_folder_btn.clicked.connect(self._open_folder)
-        action_row.addWidget(self._open_folder_btn)
-        
-        self._show_log_btn = QPushButton("Show ffmpeg Log")
-        self._show_log_btn.clicked.connect(self._show_log)
-        action_row.addWidget(self._show_log_btn)
-        
-        layout.addLayout(action_row)
+        layout.addWidget(btn_panel)
     
     def _setup_shortcuts(self):
         """Setup keyboard shortcuts."""
@@ -934,7 +955,9 @@ class MainWindow(QMainWindow):
         Checked visible rows are used if any are checked (intersected with
         class_code so stray non-class checks are silently ignored). When
         nothing is checked, fall back to ALL currently-visible rows of
-        that class.
+        that class that are not already in an active remediation state
+        (DELETED / RESEARCHING / REMEDIATED are skipped — they're already
+        being handled and re-queuing them would be wrong).
         """
         # Build a quick lookup: folder_path -> file_dict for all DB rows so
         # corruption_class() has stderr_tail available.
@@ -944,13 +967,16 @@ class MainWindow(QMainWindow):
         def _is_class(folder_path: str) -> bool:
             return corruption_class(file_by_path.get(folder_path, {})) == class_code
 
-        # Checked visible rows (if any).
+        # Checked visible rows (if any) — checked rows are explicit intent so
+        # we don't filter out active-remediation states here; the confirm dialog
+        # will make it obvious if a row is already RESEARCHING.
         checked = self._checked_folder_paths()
         checked_class = [p for p in checked if _is_class(p)]
         if checked_class:
             return checked_class
 
-        # Fallback: all visible (non-hidden) rows of this class.
+        # Fallback: all visible (non-hidden) rows of this class that are not
+        # already in an active remediation state.
         targets = []
         for row in range(self._table.rowCount()):
             if self._table.isRowHidden(row):
@@ -959,8 +985,13 @@ class MainWindow(QMainWindow):
             if item is None:
                 continue
             folder_path = item.data(Qt.ItemDataRole.UserRole)
-            if folder_path and _is_class(folder_path):
-                targets.append(folder_path)
+            if not folder_path or not _is_class(folder_path):
+                continue
+            remed_item = self._table.item(row, COL_REMEDIATION)
+            remed = remed_item.text() if remed_item else ""
+            if remed in REMEDIATED_REMEDIATION_STATES:
+                continue
+            targets.append(folder_path)
         return targets
 
     def _update_batch_class_button(self):
@@ -1190,14 +1221,26 @@ class MainWindow(QMainWindow):
         fixable_paths = _paths_for(fixable_entries)
         bad_source_paths = _paths_for(bad_source)
 
-        # Fire off bad-source blocklist remediation first (non-blocking confirm).
+        # Fire bad-source blocklist remediation first.  If the user confirms and
+        # a worker starts, we can't immediately fire the fixable remediation on
+        # top of it — the concurrent-run guard would silently block it.  Instead,
+        # stash the fixable paths and let _on_remediate_finished pick them up once
+        # the bad-source worker completes.
+        self._pending_fixable_paths = []
         if bad_source_paths:
             self._remediate_paths(bad_source_paths, source="class-b-badsource", blocklist=True)
 
-        # Fire off fixable re-search (will queue if remediation already started —
-        # _remediate_paths guards against concurrent runs and shows a message).
+        worker_running = (
+            getattr(self, "_remediate_worker", None)
+            and self._remediate_worker.isRunning()
+        )
         if fixable_paths:
-            self._remediate_paths(fixable_paths, source="class-b-fixable", blocklist=False)
+            if worker_running:
+                # Bad-source worker is live — defer fixable paths until it finishes.
+                self._pending_fixable_paths = fixable_paths
+            else:
+                # Bad-source was skipped (user said No) or there were none — fire now.
+                self._remediate_paths(fixable_paths, source="class-b-fixable", blocklist=False)
 
         # --- Show summary only for things that need a human decision ---
         undecided = inconclusive + errors
@@ -2837,6 +2880,21 @@ class MainWindow(QMainWindow):
         self._remediate_btn.setEnabled(True)
         self._scan_btn.setEnabled(True)
         self._update_batch_class_button()
+
+        # If a batch-inspect deferred fixable paths because bad-source was running,
+        # fire them now that the worker is free.
+        pending = getattr(self, "_pending_fixable_paths", [])
+        if pending:
+            self._pending_fixable_paths = []
+            # Clear the stale worker reference BEFORE calling _remediate_paths so
+            # its concurrent-run guard doesn't see a "still running" worker.
+            if hasattr(self, "_remediate_worker") and self._remediate_worker:
+                self._remediate_worker.deleteLater()
+                self._remediate_worker = None
+            # Refresh the table so the blocklisted movie moves to RESEARCHING.
+            self._refresh_table()
+            self._remediate_paths(pending, source="class-b-fixable", blocklist=False)
+            return  # skip the normal completion message — fixable confirm is now showing
         
         # Build summary message
         summary_lines = [

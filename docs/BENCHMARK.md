@@ -3,7 +3,7 @@
 Quick reference for using the built-in benchmark to determine how many parallel
 scan workers your hardware can effectively use.
 
-For day-to-day usage, see [USERGUIDE.md](USERGUIDE.md). For setting up the app
+For day-to-day usage, see [MANUAL.md](MANUAL.md). For setting up the app
 on additional PCs, see [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ---
@@ -362,4 +362,4 @@ disk seeks both contend, capping practical parallelism around 2.
 
 ---
 
-*See also: [USERGUIDE.md](USERGUIDE.md) | [DEPLOYMENT.md](DEPLOYMENT.md) | [WORKFLOW.md](WORKFLOW.md) | [FUTURE.md](FUTURE.md)*
+*See also: [MANUAL.md](MANUAL.md) | [DEPLOYMENT.md](DEPLOYMENT.md) | [FUTURE.md](FUTURE.md)*

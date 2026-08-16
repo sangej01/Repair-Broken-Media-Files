@@ -37,8 +37,8 @@ dist\
 ├── .env.example                # Template config (copy to .env)
 ├── README.md                   # Quick reference
 └── docs\
-    ├── USERGUIDE.md
-    ├── WORKFLOW.md
+    ├── MANUAL.md
+    ├── INTERFACE.md
     ├── DEPLOYMENT.md           # this file
     ├── DISASTER_RECOVERY.md
     └── FUTURE.md
@@ -402,4 +402,4 @@ If all pass — you're deployed.
 
 ---
 
-*See [USERGUIDE.md](USERGUIDE.md) for day-to-day usage. See [FUTURE.md](FUTURE.md) for upcoming features including full multi-PC work distribution.*
+*See [MANUAL.md](MANUAL.md) for day-to-day usage. See [FUTURE.md](FUTURE.md) for upcoming features including full multi-PC work distribution.*

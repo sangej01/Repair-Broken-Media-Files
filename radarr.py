@@ -37,26 +37,51 @@ class RadarrClient:
             raise RuntimeError(f"Failed to fetch Radarr library: {e}")
     
     def find_movie_by_path(self, folder_path: str) -> Optional[Dict[str, Any]]:
-        """Resolve folder path to Radarr movie record."""
+        """Resolve folder path to Radarr movie record.
+
+        Matching is done in two passes:
+        1. Exact (case-insensitive) folder name match.
+        2. Punctuation-normalised match — strips apostrophes, dots, and
+           colons, then collapses runs of spaces.  This handles cases where
+           the scanner folder is named e.g. "Dont.Move. (2024)" while Radarr
+           stores the path as "Don't Move (2024)".
+        """
+        import re
+
+        def _norm(s: str) -> str:
+            """Lowercase and strip punctuation that varies between sources.
+
+            Dots are replaced with spaces (not deleted) so that "Dont.Move."
+            and "Dont Move" both normalise to "dont move".  Apostrophes and
+            colons are deleted because they carry no word-separation meaning.
+            """
+            s = s.lower()
+            s = s.replace("'", "").replace(":", "")
+            s = s.replace(".", " ")
+            s = re.sub(r"\s+", " ", s).strip()
+            return s
+
         library = self.get_library_cached()
-        
-        # Normalize folder path for comparison
         folder_name = Path(folder_path).name.lower()
-        
+        folder_name_norm = _norm(folder_name)
+
+        exact_match = None
+        norm_match = None
+
         for movie in library:
-            # Check against movie path
             movie_path = movie.get("path", "")
-            if movie_path:
-                movie_folder_name = Path(movie_path).name.lower()
-                if movie_folder_name == folder_name:
-                    return movie
-            
-            # Also check folder name
-            folder = movie.get("folder", "")
-            if folder and folder.lower() == folder_name:
-                return movie
-        
-        return None
+            candidates = [Path(movie_path).name if movie_path else "",
+                          movie.get("folder", "") or ""]
+            for candidate in candidates:
+                if not candidate:
+                    continue
+                c_lower = candidate.lower()
+                if c_lower == folder_name:
+                    return movie          # exact hit — return immediately
+                if _norm(c_lower) == folder_name_norm and norm_match is None:
+                    norm_match = movie    # keep as fallback
+
+        return norm_match
     
     def get_movie(self, movie_id: int) -> Optional[Dict[str, Any]]:
         """Get movie details by ID."""

@@ -1,39 +1,45 @@
-# Interface Guide: Repair Broken Media Files
+# Interface Reference: Repair Broken Media Files
 
-A tour of the application window — what every control does. For scenarios and flow
-diagrams see [MANUAL.md](MANUAL.md); for step-by-step tasks see
-[WORKFLOW.md](WORKFLOW.md); for full reference and CLI see [USERGUIDE.md](USERGUIDE.md).
+Every control in the window, what it does, and when to use it.
+
+For step-by-step tasks see [WORKFLOW_CHECKLIST.md](WORKFLOW_CHECKLIST.md).
+For beginner orientation see [IDIOTS_GUIDE.md](IDIOTS_GUIDE.md).
+For scenarios, CLI, and troubleshooting see [MANUAL.md](MANUAL.md).
 
 ---
 
-## The window at a glance
+## Window layout
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
-│  Repair Broken Media Files                                                   │
-│  Scan your movie library for structurally broken files and remediate them    │
+│  Repair Broken Media Files  v1.x.x                                         │
+│  Scan your movie library for structurally broken files and remediate them   │
 ├────────────────────────────────────────────────────────────────────────────┤
-│  View: [Database (Show All Results) ▾]              💾 info message here     │
+│  View: [Database (Show All Results) ▾]              💾 info message         │
 ├────────────────────────────────────────────────────────────────────────────┤
-│  Library: ☑ A-H ☑ I-S ☑ T-Z   Parallel scans:[2▾]  Timeout/file:[30 min▾]   │
-│                                              [Start Scan]  [Stop]             │
+│  Library: ☑ A-H  ☑ I-S  ☑ T-Z   Parallel scans:[2▾]  Timeout/file:[30min▾] │
+│                                                   [Start Scan]  [Stop]      │
 ├────────────────────────────────────────────────────────────────────────────┤
-│  Library:  [████░░░░░░░░░░░░░░░░░] A-H: 240 / 1180 scanned (20%) · 940 left   │
-│  ⏱ Scanning 2 file(s)…       [███████░░░░░░░] 45/247 (18%)                    │
-│  ⏱ The Accidental Tourist (1988)  [4.2G] — 3m 21s                            │
-│  ⏱ Naked (1993)                   [7.3G] — 1m 05s                            │
+│  Library:  [████░░░░░] A-H: 240 / 1180 scanned (20%) · 940 left            │
+│  ⏱ Scanning 2 file(s)…           [████████░░░░] 45/247 (18%)               │
+│  ⏱ The Accidental Tourist (1988) [4.2G] — 3m 21s                           │
+│  ⏱ Naked (1993)                  [7.3G] — 1m 05s                           │
 ├────────────────────────────────────────────────────────────────────────────┤
-│  Status:[All▾]  Remediation:[Any▾]  Search:[__________]  [Hide Skipped]      │
+│  Status:[All▾]  Remediation:[Any▾]  Corruption type:[All types▾]            │
+│  Search:[____________]  [Hide Skipped]                                      │
 ├────────────────────────────────────────────────────────────────────────────┤
-│  ☐ │ Folder            │ Size │ Status  │ Reason           │ Remediation │ # │
-│  ☑ │ 28 Years Later    │11.7G │ CORRUPT │ [Truncated] ...  │ NONE        │ 0 │
-│  ☐ │ Naked (1993)      │ 7.3G │ CORRUPT │ [Bad headers]... │ RESEARCHING │ 1 │
-│  ☐ │ Ryans Daughter    │ 2.8G │ CLEAN   │                  │ NONE        │ 0 │
+│  ☐ │ Folder            │ Size │ Status  │ Reason           │ Rem.  │ # │   │
+│  ☑ │ 28 Years Later    │11.7G │ CORRUPT │ [Truncated]...   │ NONE  │ 0 │   │
+│  ☐ │ Naked (1993)      │ 7.3G │ CORRUPT │ [Bad headers]... │ RESRCH│ 1 │   │
+│  ☐ │ Ryans Daughter    │ 2.8G │ CLEAN   │                  │ NONE  │ 0 │   │
 ├────────────────────────────────────────────────────────────────────────────┤
-│  247 total, 47 corrupt, 198 clean, 2 error                                   │
+│  [Scan Activity log — append-only feed, persisted to DB]                   │
 ├────────────────────────────────────────────────────────────────────────────┤
-│  [Select All][Select None]      [Queue for Remediation][Delete + Re-search]  │
-│                                 [Open Folder][Show ffmpeg Log]               │
+│  247 total, 47 corrupt, 198 clean, 2 error                                 │
+├────────────────────────────────────────────────────────────────────────────┤
+│  [Select All][Select None] | [Re-scan TIMEOUTs][Check Re-downloads][Backup] │
+│  [Queue for Remediation][Delete + Re-search][Re-search all Group A]         │
+│  [Open Folder][Show ffmpeg Log]                                             │
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -41,53 +47,63 @@ diagrams see [MANUAL.md](MANUAL.md); for step-by-step tasks see
 
 ## Status vs Remediation — the two columns people confuse
 
-These track **two different things** and are independent of each other:
+**Two independent axes.** A movie moves along both at the same time.
 
-- **Status** = *what the scan found* — the file's condition. Set by the scanner.
-  Answers **"Is this file OK?"**
-- **Remediation** = *what you have done about it* — the fix-it workflow. Set by you
-  and the Radarr flow. Answers **"Where is this in the fix pipeline?"**
+| Column | Question it answers | Who sets it |
+|--------|---------------------|-------------|
+| **Status** | *Is this file OK?* (the diagnosis) | the scanner |
+| **Remediation** | *What have I done about it?* (the fix pipeline) | you + Radarr |
 
-Think of it as **diagnosis (Status)** vs **treatment plan (Remediation)**.
-
-A single file moves along both axes independently. For example:
+Examples of combinations:
 
 | Status | Remediation | What it means |
 |--------|-------------|---------------|
-| CORRUPT | NONE | Broken; you haven't acted yet (typical starting point) |
-| CORRUPT | QUEUED | Broken; you've marked it for the next delete + re-search batch |
-| CORRUPT | RESEARCHING | Was broken; deleted and Radarr is re-downloading (row shown grayed/italic) |
-| CLEAN | REMEDIATED | Re-acquired copy verified clean — success |
+| CORRUPT | NONE | Broken; not yet acted on |
+| CORRUPT | QUEUED | Broken; queued for the next delete + re-search |
+| CORRUPT | RESEARCHING | Was broken; deleted, Radarr is re-downloading (row grayed/italic) |
+| CLEAN | REMEDIATED | Re-acquired copy verified clean |
 | CORRUPT | SKIPPED | Broken, but you chose to leave it alone |
 | CLEAN | NONE | Fine; nothing to do |
 
-### Status values (scan verdict)
+---
+
+## Status values (scan verdict)
 
 | Status | Color | Meaning | Re-scan changes it? |
 |--------|-------|---------|---------------------|
 | **CLEAN** | green | Decoded fully, no real errors | No — definitive |
-| **CORRUPT** | red (bold) | Genuine decode/demux corruption | No — deterministic (use Deep Inspect) |
+| **CORRUPT** | red (bold) | Genuine decode/demux corruption | No — use Deep Inspect instead |
 | **TIMEOUT** | orange | Scan ran out of time (slow NAS / big file) | **Yes** — not a verdict |
-| **ERROR** | yellow | Scan couldn't run (ffmpeg/PATH/permission) | **Yes**, after fixing the cause |
+| **ERROR** | yellow | Scan couldn't run (ffmpeg/PATH/permissions) | **Yes**, after fixing the cause |
 | **EMPTY** | grey | No video file in the folder | Only if you add one |
 | **MISSING** | purple | Folder no longer exists on disk | Use "Verify Folder Exists" |
 | **SCANNING** | blue | Being decoded right now | — |
 | **UNKNOWN** | default | Discovered but never got a real verdict | **Yes** — never decided |
 
-### Remediation values (workflow state)
+> **Tip:** the **Status** filter has a **Problematic** shortcut (above the dotted
+> separator) that shows **TIMEOUT + UNKNOWN + ERROR** together — the three statuses
+> where a re-scan can actually change the result. Use this to find everything worth
+> re-scanning in one click.
+
+---
+
+## Remediation values (workflow state)
 
 | Remediation | Meaning |
 |-------------|---------|
 | **NONE** | No action taken (default) |
-| **QUEUED** | You marked it for the delete + re-search batch |
+| **QUEUED** | Marked for the next delete + re-search batch |
 | **DELETED** | File removed from disk |
 | **RESEARCHING** | Radarr told to find a fresh copy |
 | **REMEDIATED** | Confirmed clean replacement acquired |
-| **FAILED** | A remediation step errored — needs your attention |
+| **FAILED** | A remediation step errored — needs attention |
 | **SKIPPED** | You chose to leave it alone |
 
-> Tip: the **Status** and **Remediation** column headers (and the matching filter
-> labels) have tooltips that summarize all of the above — hover them in the app.
+Rows in **DELETED / RESEARCHING / REMEDIATED** are grayed out and italicized —
+the original has been deleted and a fresh download is in progress.
+
+> Hover the **Status** and **Remediation** column headers in the app for a quick
+> reminder tooltip.
 
 ---
 
@@ -95,11 +111,10 @@ A single file moves along both axes independently. For example:
 
 | Mode | What it shows |
 |------|---------------|
-| **Database (Show All Results)** 💾 | Every previously scanned file from the database. Scan controls are disabled (view/manage only). Use this to review results, queue, and remediate. |
-| **Live Scan (Start Fresh)** 🔴 | The table for the selected libraries, updating in place as a scan runs. Scan controls enabled. |
+| **Database (Show All Results)** 💾 | Every previously scanned file from the database. Scan controls are disabled. Use this to review results, queue, and remediate. Default on launch. |
+| **Live Scan (Start Fresh)** 🔴 | The table updates in place as a scan runs. Scan controls enabled. Starts automatically when you click Start Scan. |
 
-Both modes read/write the same database — Live mode saves everything, Database mode
-displays it. Starting a scan automatically switches you to Live mode.
+Both modes read/write the same database.
 
 ---
 
@@ -107,42 +122,26 @@ displays it. Starting a scan automatically switches you to Live mode.
 
 | Control | What it does |
 |---------|--------------|
-| **Library: A-H / I-S / T-Z** | Which library roots to scan (checkboxes). |
-| **Parallel scans** | How many files to decode at once (1–8). Higher = faster but more CPU/disk. Default 2 (good for 1 GbE NAS). |
-| **Timeout/file** | Per-file ffmpeg time budget (30 min … No limit). Raise it for large 4K files over a slow network. A hit here yields TIMEOUT (not CORRUPT). |
-| **Start Scan** | Begins scanning. Switches to Live mode and pre-loads the selected libraries so you see rows immediately. |
-| **Stop** | Cancels the running scan (also **Esc**). |
+| **Library: A-H / I-S / T-Z** | Which library roots to scan. |
+| **Parallel scans** | How many files to decode at once (1–8). Default 2 (good for 1 GbE NAS). Higher = faster but more CPU/disk. |
+| **Timeout/file** | Per-file ffmpeg time budget (30 min … No limit). Raise for large 4K files over a slow NAS. A hit yields TIMEOUT, not CORRUPT. |
+| **Start Scan** | Begins scanning. Automatically switches to Live mode. |
+| **Stop** | Cancels the running scan (also **Esc**). In-flight files are reset to UNKNOWN — never falsely recorded as CORRUPT. |
 
 ### Library coverage bar
 
-Above the session progress bar, the **Library** bar shows overall coverage of the
-**currently-selected libraries** — folders with a verdict vs. folders on disk —
-e.g. `A-H: 240 / 1180 scanned (20%) · 940 left`. It persists across sessions and
-reflects only the libraries you have checked, so it answers "how far through the
-whole thing am I" (a full library scan can take days). The session bar below it
-shows just the current run.
+Shows overall coverage of the **currently-selected libraries** — folders with a
+verdict vs. folders on disk — e.g. `A-H: 240 / 1180 scanned (20%) · 940 left`.
+Persists across sessions. The session progress bar below it shows only the current run.
 
-Folders scanned within the last 7 days with a definitive result are **skipped** on a
-resumed scan (they already have an answer). Use the CLI `scan --rescan` to force a
-full re-scan, or `rescan-corrupt` to re-check only flagged folders.
+Folders scanned within the last 7 days with a definitive result are **skipped** on
+resume (they already have an answer). Use `scan --rescan` to force a full re-scan.
 
 ### Per-worker activity panel
 
-Just below the overall progress bar, one line appears **per concurrently-scanning
-file** — so with `Parallel scans = 2` you see both movies in flight, each with its
-own name, size, and independent live timer:
-
-```
-⏱ The Accidental Tourist (1988)  [4.2G] — 3m 21s
-⏱ Naked (1993)                   [7.3G] — 1m 05s
-```
-
-Each line appears when its file starts, ticks up while ffmpeg decodes it, and
-disappears when that file finishes. A regular scan **decodes every file end to end**
-(that's how it catches mid-file corruption), so large movies legitimately sit here
-for minutes — this panel makes it obvious that multiple files are progressing rather
-than one being "stuck". (This is a normal scan, not a Deep Inspect/Full Decode —
-those only run when you request them from the right-click menu.)
+One line per concurrently-scanning file — name, size, live elapsed timer. With
+`Parallel scans = 2` you see both movies in flight. Lines appear when a file starts
+and disappear when it finishes.
 
 ---
 
@@ -150,128 +149,148 @@ those only run when you request them from the right-click menu.)
 
 | Filter | What it does |
 |--------|--------------|
-| **Status** | Show one scan verdict, **All**, or **Problematic**. |
-| **Problematic** (in the Status list) | Shortcut for **TIMEOUT + UNKNOWN + ERROR** at once — every file worth re-scanning. Sits above a dotted separator. |
+| **Status** | Show one scan verdict, **All**, or **Problematic** (TIMEOUT + UNKNOWN + ERROR). |
 | **Remediation** | Show one workflow state, or **Any**. |
-| **Corruption type** | Filter CORRUPT files by triage class. Options: **All types** (default), **A (re-download)** — truncated/missing-frames corruption fixable by re-downloading the same release; **B (source damage)** — container or encoder damage from the source, re-downloading the same release won't help; **Unclassified** — CORRUPT but no known rule matched. Selecting A or B also enables the context batch button at the bottom. Class is computed on the fly; no extra DB column. |
-| **Search** | Filter by folder name as you type (**Ctrl+F** to focus). |
-| **Hide Skipped / Show Skipped** | Toggle. Hides rows whose **Remediation is SKIPPED** — files you chose to leave alone via "Mark as Skipped". Applies immediately, in any view, scanning or not. Click again to show them. |
+| **Corruption type** | Filter CORRUPT rows by triage class: **All types** (default) · **A (re-download)** (truncated/missing-frames — same release is fine) · **B (source damage)** (container/encoder damage — same release won't help) · **Unclassified** (no rule matched). Selecting A or B enables the context batch button. Class is computed on the fly from the ffmpeg error — no extra DB column. |
+| **Search** | Filter by folder name as you type. **Ctrl+F** to focus. |
+| **Hide Skipped / Show Skipped** | Hides/shows rows whose Remediation is SKIPPED. Applies in any view, scanning or not. |
 
 ---
-
-## Scan Activity log
-
-Below the table is a **Scan Activity** panel — an append-only feed of every scan
-result as it happens, **persisted to the database** so it survives restarts. This
-is how you see what a scan accomplished (e.g. overnight) without watching it live.
-
-- Each line: `HH:MM:SS  <icon> STATE  Movie Name`, color-coded by verdict.
-- Newest results appear at the top; the feed accumulates across runs.
-- **Only problems** checkbox — hide CLEAN results, showing just
-  CORRUPT/TIMEOUT/ERROR/etc.
-- The count label shows `N events · M problems`.
-- **Clear Log** wipes the activity feed only — it does **not** touch scan results.
-- Uncheck the **Scan Activity** title to collapse the panel.
 
 ## The table
 
 | Column | Meaning |
 |--------|---------|
 | **☐** | Row checkbox for bulk selection |
-| **Folder** | Movie folder name (full path stored for actions) |
+| **Folder** | Movie folder name (full path used for all actions) |
 | **Size** | Largest video file size (sorts numerically) |
-| **Status** | Scan verdict — see the table above |
-| **Reason** | ffmpeg detail for non-CLEAN files, prefixed with a triage label (e.g. `[Incomplete / truncated]`). Hover for the full explanation + whether a re-download will help. |
-| **Remediation** | Workflow state — see the table above |
-| **Attempts** | Remediation attempts. **Bold orange at 2**, **bold red at 3+** — repeated attempts mean a systemic problem; investigate before trying again. |
+| **Status** | Scan verdict — see above |
+| **Reason** | ffmpeg detail for non-CLEAN files, prefixed with a triage label e.g. `[Incomplete / truncated]`. Hover for the full explanation and whether a re-download will help. |
+| **Remediation** | Workflow state — see above |
+| **Attempts** | Remediation attempts. **Bold orange at 2**, **bold red at 3+** — repeated failures mean a systemic problem; investigate before trying again. |
 
-Click any column header to sort. **Row styling:**
-- **CORRUPT** rows are bold red for visibility.
-- Rows in **DELETED / RESEARCHING / REMEDIATED** are **grayed out and italicized** —
-  the original has been deleted and a fresh download requested.
+Click any column header to sort. CORRUPT rows are bold red. Rows in
+DELETED / RESEARCHING / REMEDIATED are grayed and italic.
 
 ---
 
-## Right-click a row
+## Right-click menu
 
-| Action | What it does |
-|--------|--------------|
-| 📁 **Open Folder** | Opens the folder in Explorer |
-| 📄 **Show ffmpeg Log** | The scan's error output, with the triage diagnosis |
-| 🔬 **Deep Inspect (ffprobe)** | Fast diagnosis: truncated (fixable) vs container damage (bad source) vs ambiguous. See below. |
-| 🔁 **Re-scan (selected / this file)** | Force a fresh decode of the checked rows (or the row under the cursor). Runs inside the app — no CLI needed. |
-| ➕ **Queue for Remediation** | Add a CORRUPT file to the queue |
-| ➖ **Remove from Queue** | Un-queue (back to NONE) |
-| 🚫 **Mark as Skipped** | Leave this file alone |
-| 🔍 **Verify Folder Exists** | Re-check disk; mark MISSING if gone |
-| 🗑️ **Delete from SQLite Database** | Remove a stale record (repair.db only — never touches disk or Radarr) |
-| 📋 **Copy Path** | Copy the folder path |
+The menu is **context-aware** — items appear only when relevant to that row's state.
 
-### Diagnosing: Deep Inspect → Full Deep Decode
+| Action | Condition | What it does |
+|--------|-----------|--------------|
+| 📁 **Open Folder** | always | Opens the folder in Explorer |
+| 📄 **Show ffmpeg Log** | always | The scan's error output with the triage diagnosis |
+| 🔬 **Deep Inspect (ffprobe)** | always | Fast diagnosis: truncated (fixable) vs container damage (bad source) vs ambiguous. See below. |
+| 🔁 **Re-scan** | always | Force a fresh decode of the checked rows (or this row if nothing is checked) |
+| ➕ **Queue for Remediation** | CORRUPT + NONE | Add to the remediation queue |
+| ➖ **Remove from Queue** | QUEUED | Un-queue (back to NONE) |
+| 🚫 **Mark as Skipped** | always | Leave this file alone |
+| 🔍 **Verify Folder Exists** | always | Re-check disk; marks MISSING if gone |
+| 🗑️ **Delete from SQLite Database** | MISSING / FAILED / SKIPPED | Remove a stale record from repair.db only — **never touches files on disk or Radarr** |
+| 📋 **Copy Path** | always | Copy the folder path to clipboard |
 
-- **Deep Inspect (ffprobe)** runs ffprobe + a header decode + a tail decode
-  (progress bar, fast). It concludes:
-  - **Truncated / incomplete** → offers a one-click **Delete + Re-search (Radarr)**.
-  - **Container-level damage (bad source)** → the source/release is fundamentally broken;
-    re-downloading the *same* release will reproduce the same broken file. The report
-    offers a one-click **Delete + Blocklist + Re-search** which tells Radarr to find a
-    *different* release (the bad one is blocked so it won't be grabbed again).
-  - **Ambiguous** (header + end both clean) → offers **Run Full Deep Decode**.
-- **Full Deep Decode** (opt-in; decodes the whole file, minutes long, cancelable)
-  maps where errors occur and returns a verdict: **CLEAN / PLAYABLE / RE-DOWNLOAD /
-  BAD SOURCE**. RE-DOWNLOAD offers the one-click fix; BAD SOURCE means find a
-  different release.
+### Deep Inspect → Full Deep Decode
 
-> Benign note: ffmpeg's `-f null` output can emit "non monotonically increasing dts
-> to muxer" warnings on perfectly good files. These are **not** corruption and are
-> ignored by both the scanner and the full decode.
+**Deep Inspect (ffprobe)** runs ffprobe + a header decode + a tail decode (fast,
+progress bar). It concludes one of:
+
+| Diagnosis | Offered action |
+|-----------|----------------|
+| **Truncated / incomplete** — header fine, end damaged | **Delete + Re-search (Radarr)** — re-downloads the same release |
+| **Container-level damage (bad source)** — header fails | **Delete + Blocklist + Re-search** — blocklists this release in Radarr and triggers a search for a *different* one |
+| **Ambiguous** — header and end both decode clean | **Run Full Deep Decode** |
+
+**Full Deep Decode** (opt-in; decodes the whole file, minutes, cancelable) maps
+error locations and returns a verdict:
+
+| Verdict | Meaning | Action |
+|---------|---------|--------|
+| **CLEAN** | No errors — earlier flag was transient | Re-scan to clear |
+| **PLAYABLE** | A few localized errors; watchable | Leave it or Mark as Skipped |
+| **RE-DOWNLOAD** | Errors concentrated in one region | Delete + Re-search (same release fine) |
+| **BAD SOURCE** | Errors spread across most of the file | Delete + Blocklist + Re-search (need a different release) |
+
+> ffmpeg's `-f null` output can emit "non monotonically increasing dts to muxer"
+> warnings on perfectly good files. These are **not** corruption and are ignored by
+> both the scanner and the full decode.
 
 ---
 
 ## Bottom action buttons
 
+The buttons are arranged in two rows. Row 1 is utilities; row 2 is remediation.
+
+### Row 1 — utilities
+
 | Button | What it does |
 |--------|--------------|
-| **Select All / Select None** | Toggle the checkboxes on visible (displayed) rows |
+| **Select All / Select None** | Tick / untick every visible (displayed) row |
 | **Re-scan TIMEOUTs** | Force a fresh decode of every TIMEOUT file. Most TIMEOUTs are transient NAS I/O stalls and come back CLEAN. |
-| **Backup DB** | Save a timestamped snapshot of the database to the backup folder (also runs automatically on exit). |
-| **Check Re-downloads** | Ask Radarr which RESEARCHING movies have finished (imported), which are downloading, and which are pending — so you know what's ready to re-scan without opening Radarr. |
-| **Queue for Remediation** | Mark the checked (displayed) rows QUEUED |
-| **Delete + Re-search** | Run remediation on checked rows (or all QUEUED if nothing is checked): delete from disk → Radarr unmonitor → delete record → monitor → search for the same release. Asks to confirm. |
-| **Re-search all Group A** / **Inspect all Group B** | Context-sensitive batch button — label and behavior depend on the **Corruption type** filter. **Group A:** Delete + Re-search on all visible A targets (checked rows first, else all shown). **Group B:** Deep Inspect each file sequentially, then act automatically — fixable ones get Delete + Re-search; bad-source ones get Delete + Blocklist + search for a *different* release; inconclusive/errors go to a summary dialog. Disabled unless A or B is selected in the Corruption type filter, and while a scan or remediation is running. |
-| **Open Folder** | Open the selected row's folder |
-| **Show ffmpeg Log** | Show the selected row's scan output |
+| **Check Re-downloads** | Ask Radarr which RESEARCHING movies have finished (Imported), which are Downloading, and which are Pending. Saves opening Radarr. |
+| **Backup DB** | Save a timestamped snapshot of the database (also runs automatically on app exit). |
+| **Open Folder** | Open the selected row's folder in Explorer |
+| **Show ffmpeg Log** | Show the selected row's scan output and triage diagnosis |
+
+### Row 2 — remediation
+
+| Button | What it does |
+|--------|--------------|
+| **Queue for Remediation** | Mark the checked rows QUEUED. Nothing is deleted yet. |
+| **Delete + Re-search** | Run remediation on **checked rows** (or all QUEUED if nothing is checked): delete from disk → Radarr unmonitor → delete file record → monitor → search for the same release. Shows a confirm dialog listing targets before acting. |
+| **Re-search all Group A** / **Inspect all Group B** | Context batch button — label and behavior follow the **Corruption type** filter. **Group A selected:** confirm dialog → Delete + Re-search on all visible Group A targets (checked rows preferred, else all shown Group A rows not already in an active remediation state). **Group B selected:** runs Deep Inspect on each visible Group B file sequentially (cancelable progress dialog), then shows a confirm dialog for bad-source targets (blocklist + different-release search), then a confirm dialog for fixable targets (same-release re-search); inconclusive/errors go to a read-only summary dialog. Disabled when Corruption type is *All types* or *Unclassified*, and while a scan or remediation is running. |
+
+> **Group B two-pass note:** the bad-source confirm fires first; if you click Yes
+> it starts a worker. The fixable confirm then fires after that worker finishes
+> (not simultaneously). If both are present you can also pre-filter by checking
+> only the rows you want to handle first.
 
 ---
 
-## Tracking re-downloads (after Delete + Re-search)
+## Scan Activity log
 
-Delete + Re-search deletes the corrupt file and tells Radarr to grab a fresh copy;
-those rows show Remediation = **RESEARCHING**. To find out when the new copies have
-actually arrived — **without opening Radarr** — click **Check Re-downloads**. It
-reports each RESEARCHING movie as:
+Below the table: an append-only feed of every scan result, **persisted to the
+database** so it survives restarts. Format: `HH:MM:SS  <icon>  STATE  Movie Name`,
+color-coded by verdict. Newest at the top.
 
-- **Imported** — Radarr has a fresh file on disk → re-scan it to confirm CLEAN.
-- **Downloading** — currently in Radarr's queue.
-- **Pending** — still searching / nothing grabbed yet.
-- **Not found in Radarr** — the movie isn't a Radarr-managed title, so it needs
-  manual handling (e.g. a director's/final cut that shares its TMDB entry with the
-  main film).
+- **Only problems** checkbox — hide CLEAN results, show just CORRUPT/TIMEOUT/ERROR.
+- **Clear Log** — wipes the activity feed only; does not touch scan results.
+- Click the **Scan Activity** title to collapse/expand the panel.
 
-Then right-click the **Imported** ones → **Re-scan** to flip CORRUPT → CLEAN.
+---
+
+## Right-click vs. bottom buttons — when to use which
+
+| | Right-click menu | Bottom buttons |
+|---|---|---|
+| **Targets** | The single row you clicked | Checked rows, or a whole DB state |
+| **Scope** | Exactly 1 movie | Many movies at once |
+| **Menu adapts to row state?** | Yes | No |
+
+**Right-click only** (no button equivalent):
+🔬 Deep Inspect · 🚫 Mark as Skipped · ➖ Remove from Queue · 🔍 Verify Folder Exists · 🗑️ Delete from SQLite Database · 📋 Copy Path
+
+**Buttons only** (no menu equivalent):
+Delete + Re-search · Re-search all Group A / Inspect all Group B · Re-scan TIMEOUTs · Check Re-downloads · Backup DB · Select All / None
+
+**Both** (different scope):
+Open Folder · Show ffmpeg Log · Queue for Remediation · Re-scan
+
+---
 
 ## Database backups
 
-The SQLite database (all your scan results, remediation state, activity log, and
-the mtime fingerprints that keep resumed scans fast) is the one irreplaceable file.
-It is backed up as a timestamped copy to the backup folder (default:
-`Z:\Repair Media File Deploy\db-backups\`, override with `REPAIR_DB_BACKUP_DIR`):
+The SQLite database holds all scan results, remediation state, the activity log, and
+the mtime fingerprints that keep resumed scans fast. It is the one irreplaceable file.
 
-- **Automatically on exit.**
-- **On demand** via the **Backup DB** button.
+- Backed up automatically **on app exit**.
+- Backed up **on demand** via **Backup DB**.
+- Destination: `Z:\Repair Media File Deploy\db-backups\` (override with `REPAIR_DB_BACKUP_DIR` in `.env`).
+- Newest ~30 copies kept; older ones pruned.
+- Uses SQLite's online `.backup` — consistent snapshots, safe while the app is running.
 
-The newest ~30 copies are kept; older ones are pruned. Backups use SQLite's online
-`.backup`, so they're consistent snapshots.
+---
 
 ## Keyboard shortcuts
 
@@ -284,5 +303,5 @@ The newest ~30 copies are kept; older ones are pruned. Backups use SQLite's onli
 
 ---
 
-*Part of the Media Tools Consortium. See [USERGUIDE.md](USERGUIDE.md) and
-[WORKFLOW.md](WORKFLOW.md) for more.*
+*See [MANUAL.md](MANUAL.md) for scenarios, CLI reference, and troubleshooting.*
+*See [WORKFLOW_CHECKLIST.md](WORKFLOW_CHECKLIST.md) for step-by-step task checklists.*

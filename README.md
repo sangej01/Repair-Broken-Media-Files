@@ -217,16 +217,16 @@ bytes, so use Deep Inspect on those instead of a blind re-scan.
 
 ## Documentation
 
-Prefer step-by-step checklists? See **[docs/WORKFLOW_CHECKLIST.md](docs/WORKFLOW_CHECKLIST.md)** — pick your task and follow the steps.
-
-- **[MANUAL.md](docs/MANUAL.md)** - Full user manual: paths through the app, common scenarios, and flow diagrams
-- **[INTERFACE.md](docs/INTERFACE.md)** - Tour of the window: every control explained, and the Status-vs-Remediation distinction
-- **[USERGUIDE.md](docs/USERGUIDE.md)** - Complete usage guide (step-by-step workflows, CLI commands, troubleshooting)
-- **[WORKFLOW.md](docs/WORKFLOW.md)** - Task-oriented walkthrough with examples
-- **[BENCHMARK.md](docs/BENCHMARK.md)** - Find your optimal `--workers` value with the built-in benchmark
-- **[DEPLOYMENT.md](docs/DEPLOYMENT.md)** - Build standalone .exe and deploy to other PCs
-- **[FUTURE.md](docs/FUTURE.md)** - Roadmap and future enhancements (multi-PC, PostgreSQL, etc.)
-- **[DISASTER_RECOVERY.md](docs/DISASTER_RECOVERY.md)** - How to restore from GitHub if local PC fails
+| Doc | What it's for |
+|-----|---------------|
+| **[IDIOTS_GUIDE.md](docs/IDIOTS_GUIDE.md)** | Beginner orientation — what to do with each status, Group A vs B at a glance |
+| **[WORKFLOW_CHECKLIST.md](docs/WORKFLOW_CHECKLIST.md)** | Step-by-step task checklists — open this, pick your task, follow the steps |
+| **[INTERFACE.md](docs/INTERFACE.md)** | Every control in the window — filters, buttons, right-click menu, columns |
+| **[MANUAL.md](docs/MANUAL.md)** | Scenarios, workflows, CLI reference, and troubleshooting |
+| **[BENCHMARK.md](docs/BENCHMARK.md)** | Find your optimal `--workers` value with the built-in benchmark |
+| **[DEPLOYMENT.md](docs/DEPLOYMENT.md)** | Build the standalone `.exe` and deploy to other PCs |
+| **[FUTURE.md](docs/FUTURE.md)** | Roadmap and future enhancements |
+| **[DISASTER_RECOVERY.md](docs/DISASTER_RECOVERY.md)** | Restore from GitHub if local PC fails |
 
 ---
 
@@ -406,7 +406,7 @@ MIT License - Part of the Media Tools Consortium
 
 ## Support
 
-See [USERGUIDE.md](docs/USERGUIDE.md) for detailed help.
+See [MANUAL.md](docs/MANUAL.md) for scenarios and troubleshooting, and [INTERFACE.md](docs/INTERFACE.md) for control reference.
 
 Report issues at your GitHub repository.
 

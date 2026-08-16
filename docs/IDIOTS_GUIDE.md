@@ -164,7 +164,7 @@ Some things live in **only one** place:
 - **Buttons only:** 🗑️ Delete + Re-search, 🔎 Re-search all Group A / Inspect all Group B, 🔁 Re-scan TIMEOUTs, ✅ Check Re-downloads, 💾 Backup DB.
 
 > Want the full breakdown (every action, both places, when to use which)?
-> See **[ACTIONS_MENU_vs_BUTTONS.md](ACTIONS_MENU_vs_BUTTONS.md)**.
+> See the **Right-click vs. bottom buttons** section in **[INTERFACE.md](INTERFACE.md)**.
 
 ---
 
