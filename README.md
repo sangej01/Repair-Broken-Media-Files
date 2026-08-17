@@ -2,7 +2,7 @@
 
 Scan your movie library for structurally corrupted files and remediate them automatically via Radarr.
 
-![Version](https://img.shields.io/badge/version-1.8.0-blue)
+![Version](https://img.shields.io/badge/version-1.9.0-blue)
 ![Python](https://img.shields.io/badge/python-3.11+-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -348,6 +348,24 @@ Ensure folder name matches: `Movie Title (YYYY)`
 
 The running version is shown in the window title/subtitle and via `python main.py version`.
 The single source of truth is `APP_VERSION` in `config.py`.
+
+**v1.9.0** (2026-08-17)
+- **Corruption-type filter + context batch button** — filter CORRUPT rows by
+  triage class (A re-download / B source-damage / Unclassified); the batch button
+  becomes **Re-search all Group A** or **Inspect all Group B** accordingly.
+- **Group B bad-source blocklist** — Deep Inspect and Inspect all Group B can
+  blocklist the bad release and have Radarr search for a *different* one.
+- **Group B safety guard on Delete + Re-search** — a plain re-search that targets
+  source-damage files now warns and offers the blocklist path instead of re-grabbing
+  the same broken release.
+- **Full Deep Decode one-click follow-ups** — CLEAN verdict offers **Mark CLEAN in
+  database**; PLAYABLE offers **Mark as Skipped (keep the file)** — no re-scan needed.
+- **Punctuation-aware Radarr matching** — folder names like `Dont.Move. (2024)` now
+  match Radarr's `Don't Move (2024)` (dots→spaces, apostrophes stripped).
+- **UI polish** — bottom actions arranged in a 2-row grid; SKIPPED rows are now
+  grayed/italic like other handled rows.
+- **Docs consolidated** — 11 guides reduced to 8; USERGUIDE/WORKFLOW/ACTIONS merged
+  into INTERFACE + MANUAL, with inaccuracies fixed.
 
 **v1.8.0** (2026-08-11)
 - **Check Re-downloads** — query Radarr in-app for RESEARCHING movies (imported /
