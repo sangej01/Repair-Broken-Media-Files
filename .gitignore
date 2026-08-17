@@ -39,3 +39,7 @@ repair.db.scanlock
 # PyInstaller intermediate build artifacts
 build/
 *.exe.bak-*
+
+# Built executable — regenerate with build.ps1; too large for git.
+# Publish as a GitHub Release asset instead of committing.
+dist/*.exe
