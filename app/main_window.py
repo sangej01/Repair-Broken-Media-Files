@@ -2822,6 +2822,55 @@ class MainWindow(QMainWindow):
             )
             return
 
+        # Group B safety guard: a plain re-search (blocklist=False) grabs the SAME
+        # release, which won't help a bad-source (Group B) file — the same broken
+        # release comes back. If the target list contains any Group B files and we
+        # weren't already told to blocklist, warn and offer to route them through
+        # the blocklist path instead. Skipped for the class-b-* sources (they
+        # already know exactly what they are) and when already blocklisting.
+        if not blocklist and source not in ("class-b-fixable", "class-b-badsource"):
+            all_files = db.get_files(self._db_conn) if self._db_conn else []
+            class_by_path = {f["folder_path"]: corruption_class(f) for f in all_files}
+            group_b = [p for p in folder_paths if class_by_path.get(p) == CLASS_B]
+            if group_b:
+                b_names = "\n".join(f"  • {Path(p).name}" for p in group_b[:15])
+                if len(group_b) > 15:
+                    b_names += f"\n  ... and {len(group_b) - 15} more"
+                box = QMessageBox(self)
+                box.setIcon(QMessageBox.Icon.Warning)
+                box.setWindowTitle("Group B (source damage) detected")
+                box.setText(
+                    f"{len(group_b)} of the selected file(s) look like "
+                    f"Group B — source damage:\n\n{b_names}\n\n"
+                    "Re-downloading the SAME release usually returns the same broken "
+                    "file. The recommended fix is to BLOCKLIST the bad release and "
+                    "have Radarr search for a DIFFERENT one.\n\n"
+                    "How do you want to handle these?"
+                )
+                blocklist_btn = box.addButton(
+                    "Blocklist + different release", QMessageBox.ButtonRole.AcceptRole
+                )
+                plain_btn = box.addButton(
+                    "Re-search same release anyway", QMessageBox.ButtonRole.DestructiveRole
+                )
+                cancel_btn = box.addButton(QMessageBox.StandardButton.Cancel)
+                box.setDefaultButton(blocklist_btn)
+                box.exec()
+                clicked = box.clickedButton()
+                if clicked is cancel_btn:
+                    return
+                if clicked is blocklist_btn:
+                    # Route the Group B files through the blocklist path. Only ONE
+                    # remediation can run at a time, so if there are also non-B
+                    # files, defer them to a follow-up pass (fired when the
+                    # blocklist worker finishes) rather than colliding with the
+                    # concurrent-run guard.
+                    remaining = [p for p in folder_paths if class_by_path.get(p) != CLASS_B]
+                    self._pending_plain_paths = remaining
+                    self._remediate_paths(group_b, source="class-b-badsource", blocklist=True)
+                    return
+                # else: plain_btn — fall through and re-search the same release for all.
+
         # Explain where this list came from so the target is never a surprise.
         origin = {
             "checked": "the rows you checked",
@@ -2903,20 +2952,26 @@ class MainWindow(QMainWindow):
         self._scan_btn.setEnabled(True)
         self._update_batch_class_button()
 
-        # If a batch-inspect deferred fixable paths because bad-source was running,
-        # fire them now that the worker is free.
-        pending = getattr(self, "_pending_fixable_paths", [])
-        if pending:
-            self._pending_fixable_paths = []
-            # Clear the stale worker reference BEFORE calling _remediate_paths so
-            # its concurrent-run guard doesn't see a "still running" worker.
-            if hasattr(self, "_remediate_worker") and self._remediate_worker:
-                self._remediate_worker.deleteLater()
-                self._remediate_worker = None
-            # Refresh the table so the blocklisted movie moves to RESEARCHING.
-            self._refresh_table()
-            self._remediate_paths(pending, source="class-b-fixable", blocklist=False)
-            return  # skip the normal completion message — fixable confirm is now showing
+        # A previous remediation may have deferred follow-up work because only one
+        # remediation can run at a time. Fire the next deferred batch now that the
+        # worker is free. Order: fixable Group B (from Inspect all Group B), then
+        # plain same-release re-searches (from the Group B safety guard).
+        for attr, src, bl in (
+            ("_pending_fixable_paths", "class-b-fixable", False),
+            ("_pending_plain_paths", "selected", False),
+        ):
+            pending = getattr(self, attr, [])
+            if pending:
+                setattr(self, attr, [])
+                # Clear the stale worker reference BEFORE calling _remediate_paths so
+                # its concurrent-run guard doesn't see a "still running" worker.
+                if hasattr(self, "_remediate_worker") and self._remediate_worker:
+                    self._remediate_worker.deleteLater()
+                    self._remediate_worker = None
+                # Refresh the table so the just-finished rows move to RESEARCHING.
+                self._refresh_table()
+                self._remediate_paths(pending, source=src, blocklist=bl)
+                return  # skip the normal completion message — next confirm is showing
         
         # Build summary message
         summary_lines = [

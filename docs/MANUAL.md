@@ -115,7 +115,9 @@ Reason label starts with one of:
 `[Timestamp (DTS/PTS) problem]`
 
 These often mean the source release is fundamentally bad. Re-downloading the
-same release will likely reproduce the same broken file.
+same release will likely reproduce the same broken file — so **do not** use the
+plain **Delete + Re-search** button on Group B files. (If you do, a safety guard
+warns you and offers to blocklist + search for a different release instead.)
 
 **One at a time:** right-click → **Deep Inspect** → follow the offered action:
 - **Delete + Re-search** (truncated / fixable)
