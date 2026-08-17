@@ -2211,15 +2211,39 @@ class MainWindow(QMainWindow):
         # Clear the per-worker activity panel.
         self._worker_rows_clear()
         
-        # Show summary
-        msg = (
-            f"Scan complete!\n\n"
-            f"Folders scanned: {stats['folders_done']}\n"
-            f"CLEAN: {stats['clean_count']}\n"
-            f"CORRUPT: {stats['corrupt_count']}\n"
-            f"ERROR: {stats['error_count']}\n"
-            f"EMPTY: {stats['empty_count']}"
-        )
+        # Show summary. Include every outcome (a re-decode that times out again
+        # is a real result — omitting TIMEOUT/MISSING made "43 scanned, all zero"
+        # look like nothing happened).
+        done = stats.get('folders_done', 0)
+        clean = stats.get('clean_count', 0)
+        corrupt = stats.get('corrupt_count', 0)
+        error = stats.get('error_count', 0)
+        empty = stats.get('empty_count', 0)
+        timeout = stats.get('timeout_count', 0)
+        missing = stats.get('missing_count', 0)
+        lines = [
+            "Scan complete!",
+            "",
+            f"Folders scanned: {done}",
+            f"CLEAN: {clean}",
+            f"CORRUPT: {corrupt}",
+            f"ERROR: {error}",
+            f"EMPTY: {empty}",
+            f"TIMEOUT: {timeout}",
+        ]
+        if missing:
+            lines.append(f"MISSING: {missing}")
+        # If everything (or nearly everything) timed out again, explain why the
+        # other buckets are empty and what to do next.
+        if timeout and clean == 0 and corrupt == 0 and error == 0 and empty == 0:
+            lines += [
+                "",
+                "All re-scanned files timed out again — they did not finish "
+                "decoding within the current per-file budget.",
+                "Raise 'Timeout/file' (e.g. 2 hr or No limit) and re-scan, or "
+                "check NAS speed. TIMEOUT is not a corruption verdict.",
+            ]
+        msg = "\n".join(lines)
         self._progress_label.setText("Scan complete - switch to Database View to see all results")
         self._progress_bar.setValue(stats['folders_done'])
         

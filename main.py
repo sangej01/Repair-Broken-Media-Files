@@ -94,6 +94,9 @@ def cli_scan(args):
     print(f"  CORRUPT:        {stats['corrupt_count']}")
     print(f"  ERROR:          {stats['error_count']}")
     print(f"  EMPTY:          {stats['empty_count']}")
+    print(f"  TIMEOUT:        {stats.get('timeout_count', 0)}")
+    if stats.get('missing_count'):
+        print(f"  MISSING:        {stats['missing_count']}")
     print(f"\nDatabase: {config.DB_PATH}")
     
     conn.close()
@@ -210,6 +213,9 @@ def cli_rescan_corrupt(args):
     print(f"  CORRUPT:      {stats['corrupt_count']}   (confirmed still corrupt)")
     print(f"  ERROR:        {stats['error_count']}")
     print(f"  EMPTY:        {stats['empty_count']}")
+    print(f"  TIMEOUT:      {stats.get('timeout_count', 0)}   (still didn't finish — raise --timeout)")
+    if stats.get('missing_count'):
+        print(f"  MISSING:      {stats['missing_count']}")
     conn.close()
     scanlock.release()
 

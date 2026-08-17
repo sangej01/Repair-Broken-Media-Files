@@ -1325,10 +1325,19 @@ def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional
             "corrupt_count": 0,
             "error_count": 0,
             "empty_count": 0,
+            "timeout_count": 0,
+            "missing_count": 0,
         }
     
     # Scan statistics
-    stats = {"clean_count": 0, "corrupt_count": 0, "error_count": 0, "empty_count": 0}
+    stats = {
+        "clean_count": 0,
+        "corrupt_count": 0,
+        "error_count": 0,
+        "empty_count": 0,
+        "timeout_count": 0,
+        "missing_count": 0,
+    }
     done = 0
     
     def _scan_one(folder: Path):
@@ -1536,6 +1545,10 @@ def scan_library(roots: list, workers: int, db_conn, progress_callback: Optional
                     stats["error_count"] += 1
                 elif state == "EMPTY":
                     stats["empty_count"] += 1
+                elif state == "TIMEOUT":
+                    stats["timeout_count"] += 1
+                elif state == "MISSING":
+                    stats["missing_count"] += 1
                 
                 done += 1
                 

@@ -185,6 +185,13 @@ budget, almost always because of transient NAS I/O slowness or a very large file
    setting or check NAS health.
 3. If a retry comes back **CORRUPT**, it's real corruption — diagnose and remediate.
 
+The completion summary reports every outcome, including a **TIMEOUT** count. If it
+shows something like `Folders scanned: 43, CLEAN: 0, CORRUPT: 0, ... TIMEOUT: 43`,
+that means every file *timed out again* — none finished decoding in the current
+budget. That's expected for large 4K/HEVC rips over a slow NAS; raise
+**Timeout/file** (e.g. 2 hr or No limit) and re-scan, or investigate NAS speed.
+A TIMEOUT is never a corruption verdict — the files are just slow, not broken.
+
 The timeout is duration-aware (long low-bitrate films get a proportional budget).
 A stall detector flags reads that make no progress for ~5 minutes as
 "STALLED near X" rather than letting them run indefinitely.
