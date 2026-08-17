@@ -193,8 +193,33 @@ budget. That's expected for large 4K/HEVC rips over a slow NAS; raise
 A TIMEOUT is never a corruption verdict — the files are just slow, not broken.
 
 The timeout is duration-aware (long low-bitrate films get a proportional budget).
-A stall detector flags reads that make no progress for ~5 minutes as
-"STALLED near X" rather than letting them run indefinitely.
+
+### Two different limits: budget vs. stall
+
+There are **two independent** ways a decode ends early, and they're easy to confuse:
+
+- **Timeout/file budget** — the total wall-clock time a decode is allowed. Raising
+  this (e.g. to 2 hr) helps files that decode steadily but slowly.
+- **Stall detector** — kills a decode that makes **zero progress for 5 minutes
+  straight**, *regardless of the budget*. The Reason reads
+  `STALLED: decode made no progress for 300s (stuck near <X>)`, where `<X>` is how
+  far the decode got before it froze.
+
+**A STALLED result is NOT a budget timeout.** Raising Timeout/file does nothing for
+stalls — the file never reaches the budget; it's killed after 5 minutes of being
+frozen. Stalls almost always mean the **NAS stopped returning bytes** (network
+congestion, disk seek stall, SMB hiccup), especially when several parallel workers
+are hammering one link with large 4K/HEVC files. Scattered `stuck near` values
+across many files (e.g. 37s, 934s, 4835s) point at I/O flakiness, not many broken
+movies.
+
+**If lots of files STALL:**
+1. **Lower Parallel scans** (e.g. to 1–2) so workers don't starve each other's NAS reads.
+2. **Check NAS health / network** — the stall is usually the storage layer, not the file.
+3. If your NAS is just slow-but-steady and stalls transiently, **raise the stall
+   limit**: set `REPAIR_STALL_LIMIT_SEC` in `.env` to a larger value (e.g. `900`
+   for 15 min), or `0` to disable stall detection entirely (a decode then only ends
+   on the Timeout/file budget). Default is `300`.
 
 ---
 
@@ -316,6 +341,7 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for building the exe and multi-PC setup.
 | Corruption type filter not visible | Window too narrow | Widen the window; the filter is to the right of Remediation |
 | UI lags 4–5 s per click | NAS latency blocking a UI-thread read | Transient; check Z: health; restart app if persistent |
 | Both progress bars stuck at 0% | ffmpeg hung on a NAS read | Stall detector flags it at ~5 min; or Stop + re-scan |
+| Many files "STALLED: no progress for 300s" | NAS stopped returning bytes under parallel load — NOT a budget timeout (raising Timeout/file won't help) | Lower **Parallel scans**; check NAS/network; if stalls are transient, raise `REPAIR_STALL_LIMIT_SEC` in `.env` (e.g. 900) or set 0 to disable |
 | "Scanner Busy" | Another scanner holds the lock | Close the other instance; stale locks auto-clear after expiry |
 | "Movie not found in Radarr" | Folder name doesn't match Radarr's library | See Scenario 8 above |
 | Movie re-downloaded but still CORRUPT | Radarr re-grabbed the same bad release | Deep Inspect → BAD SOURCE → Delete + Blocklist + Re-search |

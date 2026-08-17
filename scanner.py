@@ -354,8 +354,13 @@ def null_decode(video_path: Path, timeout_sec: int = 1800, progress_callback=Non
     # Stall detection: if the decode position stops advancing for this long, the
     # decode is genuinely hung (dead NAS read / pathological stream) rather than
     # slow. Timing out on a stall catches "stuck at 0%" cases fast instead of
-    # burning the whole (now larger) budget.
-    STALL_LIMIT_SEC = 300  # 5 minutes of zero progress = hung
+    # burning the whole (now larger) budget. Configurable via config.STALL_LIMIT_SEC
+    # (env REPAIR_STALL_LIMIT_SEC); 0 disables stall detection.
+    try:
+        import config as _config
+        STALL_LIMIT_SEC = int(getattr(_config, "STALL_LIMIT_SEC", 300))
+    except Exception:
+        STALL_LIMIT_SEC = 300
     last_progress_pos = -1.0
     last_progress_change = time.time()
     
@@ -430,7 +435,9 @@ def null_decode(video_path: Path, timeout_sec: int = 1800, progress_callback=Non
                 last_progress_change = now
             # Only treat as a stall once we've given it a grace period AND the
             # position never moved (or stopped moving) for STALL_LIMIT_SEC.
-            if timeout_sec != 0 and (now - last_progress_change) > STALL_LIMIT_SEC and elapsed > 30:
+            # STALL_LIMIT_SEC == 0 disables stall detection entirely.
+            if (STALL_LIMIT_SEC > 0 and timeout_sec != 0
+                    and (now - last_progress_change) > STALL_LIMIT_SEC and elapsed > 30):
                 try:
                     proc.kill()
                     proc.wait(timeout=5)

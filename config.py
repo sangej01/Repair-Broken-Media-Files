@@ -53,6 +53,13 @@ DB_BACKUP_DIR = os.getenv("REPAIR_DB_BACKUP_DIR", r"Z:\Repair Media File Deploy\
 # How many timestamped backups to keep (older ones are pruned).
 DB_BACKUP_KEEP = int(os.getenv("REPAIR_DB_BACKUP_KEEP", "30"))
 
+# Stall detector: kill a decode that makes ZERO progress for this many seconds
+# (independent of the per-file timeout budget) — catches genuinely hung NAS reads
+# instead of burning the whole budget. Raise it for a slow/busy NAS that stalls
+# transiently under parallel load; set to 0 to disable stall detection entirely
+# (a decode then only ends on the per-file timeout budget). Default 300 (5 min).
+STALL_LIMIT_SEC = int(os.getenv("REPAIR_STALL_LIMIT_SEC", "300"))
+
 # PostgreSQL connection string (used when DB_BACKEND=postgres)
 # Set DATABASE_URL in .env — contains credentials so it doesn't belong here
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()

@@ -125,7 +125,7 @@ Both modes read/write the same database.
 |---------|--------------|
 | **Library: A-H / I-S / T-Z** | Which library roots to scan. |
 | **Parallel scans** | How many files to decode at once (1–8). Default 2 (good for 1 GbE NAS). Higher = faster but more CPU/disk. |
-| **Timeout/file** | Per-file ffmpeg time budget (30 min … No limit). Raise for large 4K files over a slow NAS. A hit yields TIMEOUT, not CORRUPT. |
+| **Timeout/file** | Per-file ffmpeg *time budget* (30 min … No limit). Raise for large 4K files that decode slowly but steadily. A hit yields TIMEOUT, not CORRUPT. Note: this is separate from the **stall detector**, which kills a decode that makes zero progress for 5 min (`STALLED: …`) regardless of the budget — see MANUAL §7. |
 | **Start Scan** | Begins scanning. Automatically switches to Live mode. |
 | **Stop** | Cancels the running scan (also **Esc**). In-flight files are reset to UNKNOWN — never falsely recorded as CORRUPT. |
 
