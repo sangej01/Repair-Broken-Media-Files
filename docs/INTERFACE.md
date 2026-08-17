@@ -99,8 +99,9 @@ Examples of combinations:
 | **FAILED** | A remediation step errored — needs attention |
 | **SKIPPED** | You chose to leave it alone |
 
-Rows in **DELETED / RESEARCHING / REMEDIATED** are grayed out and italicized —
-the original has been deleted and a fresh download is in progress.
+Rows in **DELETED / RESEARCHING / REMEDIATED / SKIPPED** are grayed out and
+italicized — their disposition is handled (being replaced by Radarr, or
+deliberately left alone).
 
 > Hover the **Status** and **Remediation** column headers in the app for a quick
 > reminder tooltip.
@@ -170,7 +171,7 @@ and disappear when it finishes.
 | **Attempts** | Remediation attempts. **Bold orange at 2**, **bold red at 3+** — repeated failures mean a systemic problem; investigate before trying again. |
 
 Click any column header to sort. CORRUPT rows are bold red. Rows in
-DELETED / RESEARCHING / REMEDIATED are grayed and italic.
+DELETED / RESEARCHING / REMEDIATED / SKIPPED are grayed and italic (handled).
 
 ---
 

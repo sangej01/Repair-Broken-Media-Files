@@ -98,9 +98,14 @@ CORRUPT_CLASS_LABELS = {
 }
 
 # Remediation states meaning the original file has been deleted and a fresh
-# download requested from Radarr. Rows in these states are shown grayed-out and
-# italicized: the listed original is gone / being replaced.
+# download requested from Radarr. Used by the batch-target logic to skip rows
+# that are already being handled (do NOT add SKIPPED here — that would change
+# batch targeting semantics).
 REMEDIATED_REMEDIATION_STATES = {"DELETED", "RESEARCHING", "REMEDIATED"}
+# Remediation states that are "handled" and should render grayed-out + italic in
+# the table: the active-remediation states above plus SKIPPED (user chose to
+# leave it alone). Purely cosmetic — controls row styling only.
+DIMMED_REMEDIATION_STATES = REMEDIATED_REMEDIATION_STATES | {"SKIPPED"}
 # Muted foreground for grayed-out remediated rows (Catppuccin "overlay0").
 REMEDIATED_ROW_COLOR = "#6c7086"
 
@@ -903,14 +908,16 @@ class MainWindow(QMainWindow):
         # Store full path in user data
         folder_item.setData(Qt.ItemDataRole.UserRole, file_dict["folder_path"])
         
-        # Grayed-out + italic when a delete + re-download has been requested:
-        # the original listing has been removed / is being replaced by Radarr.
-        if remed in REMEDIATED_REMEDIATION_STATES:
+        # Grayed-out + italic once the row is "handled": a delete + re-download
+        # has been requested (DELETED/RESEARCHING/REMEDIATED), or the user chose
+        # to leave it alone (SKIPPED). Signals the disposition is decided.
+        if remed in DIMMED_REMEDIATION_STATES:
             self._style_row_remediated(row)
     
     def _style_row_remediated(self, row: int):
-        """Gray out and italicize every text cell in a row to show the original
-        file has been deleted and a fresh download requested from Radarr."""
+        """Gray out and italicize every text cell in a row whose disposition is
+        handled — either being replaced by Radarr (DELETED/RESEARCHING/
+        REMEDIATED) or deliberately left alone (SKIPPED)."""
         muted = QColor(REMEDIATED_ROW_COLOR)
         for col in range(self._table.columnCount()):
             item = self._table.item(row, col)
