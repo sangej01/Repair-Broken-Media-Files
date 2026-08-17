@@ -41,7 +41,7 @@ Status?
   CORRUPT    → Deep Inspect
                  ↓
               Truly broken?
-                No  → re-scan to clear (was a false positive)
+                No  → Full Deep Decode → Mark CLEAN (was a false positive)
                 Yes → Queue → Delete + Re-search (Radarr grabs a fresh copy)
                                ↓
                             Check Re-downloads
@@ -121,6 +121,10 @@ same release will likely reproduce the same broken file.
 - **Delete + Re-search** (truncated / fixable)
 - **Delete + Blocklist + Re-search** (bad source — Radarr finds a *different* release)
 - **Run Full Deep Decode** (ambiguous — header and tail both clean)
+
+If the Full Deep Decode returns a **CLEAN** verdict (zero real errors), the CORRUPT
+flag was a false positive. The report dialog offers **Mark CLEAN in database** —
+click it to record the clean verdict directly, without a costly full re-scan.
 
 **Batch:** set Corruption type → **B (source damage)** → **Inspect all Group B** →
 a cancelable progress dialog runs Deep Inspect on each file sequentially. When done:

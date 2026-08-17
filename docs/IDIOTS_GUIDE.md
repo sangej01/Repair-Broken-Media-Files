@@ -109,7 +109,7 @@ If the Reason says any of these:
 | **RE-DOWNLOAD** | Damage is in one spot. A new copy will likely fix it. → **Delete + Re-search.** |
 | **BAD SOURCE** | The whole file is rotten. A new copy of the SAME release won't help. → **Delete + Blocklist + Re-search** (app tells Radarr to find a *different* release). |
 | **PLAYABLE** | Tiny glitch, movie still watches fine. → Leave it, or **Mark as Skipped.** |
-| **CLEAN** | Turns out it's actually fine now. → **Re-scan** to clear the CORRUPT flag. |
+| **CLEAN** | Turns out it's actually fine. → click **Mark CLEAN in database** in the report (or **Re-scan** to clear the CORRUPT flag). |
 
 **Do this (whole-class batch — when you have several Group B files):**
 1. Set the **Corruption type** filter to **B (source damage)**.

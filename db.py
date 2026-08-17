@@ -649,6 +649,24 @@ def mark_missing(conn: RepairDBConnection, folder_path: str):
     )
 
 
+def mark_clean(conn: RepairDBConnection, folder_path: str):
+    """Mark a folder's scan_state as CLEAN.
+
+    Used when a Full Deep Decode definitively finds no errors on a file that
+    was previously flagged CORRUPT — the flag was a false positive, so we
+    record the clean verdict directly instead of forcing a full re-scan.
+    """
+    table = _files_table(conn)
+    ph = _ph(conn)
+    now = datetime.utcnow().isoformat() + "Z"
+    _execute(
+        conn,
+        f"UPDATE {table} SET scan_state = 'CLEAN', last_scan_at = {ph} "
+        f"WHERE folder_path = {ph}",
+        (now, folder_path),
+    )
+
+
 def delete_record(conn: RepairDBConnection, folder_path: str):
     """Permanently delete a file record from the database."""
     table = _files_table(conn)

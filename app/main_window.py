@@ -2569,6 +2569,15 @@ class MainWindow(QMainWindow):
                 lambda: self._remediate_paths([folder_path]),
                 True,
             ))
+        elif verdict == "CLEAN":
+            # The full decode found zero real errors — the CORRUPT flag was a
+            # false positive. Offer to write the CLEAN verdict directly so the
+            # user doesn't have to re-decode the whole file just to clear it.
+            actions.append((
+                "Mark CLEAN in database",
+                lambda: self._mark_clean(folder_path, folder_name),
+                True,
+            ))
 
         self._show_text_dialog(f"Full Deep Decode - {folder_name}", report, actions=actions)
 
@@ -2587,6 +2596,19 @@ class MainWindow(QMainWindow):
         if getattr(self, "_fulldecode_worker", None):
             self._fulldecode_worker.deleteLater()
             self._fulldecode_worker = None
+
+    def _mark_clean(self, folder_path: str, folder_name: str):
+        """Write a CLEAN verdict for a file the Full Deep Decode cleared.
+
+        Offered from the full-decode report when the verdict is CLEAN (zero
+        real errors). Records the clean result directly so the row leaves the
+        CORRUPT view without a costly full re-scan.
+        """
+        if not self._db_conn:
+            return
+        db.mark_clean(self._db_conn, folder_path)
+        self._refresh_table()
+        self._progress_label.setText(f"Marked CLEAN: {folder_name}")
 
     @Slot(str)
     def _on_inspect_error(self, msg: str):

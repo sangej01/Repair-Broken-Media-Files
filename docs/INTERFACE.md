@@ -207,7 +207,7 @@ error locations and returns a verdict:
 
 | Verdict | Meaning | Action |
 |---------|---------|--------|
-| **CLEAN** | No errors — earlier flag was transient | Re-scan to clear |
+| **CLEAN** | No errors — earlier flag was a false positive | Click **Mark CLEAN in database** in the report (no re-scan needed) |
 | **PLAYABLE** | A few localized errors; watchable | Leave it or Mark as Skipped |
 | **RE-DOWNLOAD** | Errors concentrated in one region | Delete + Re-search (same release fine) |
 | **BAD SOURCE** | Errors spread across most of the file | Delete + Blocklist + Re-search (need a different release) |
