@@ -320,4 +320,4 @@ https://github.com/sangej01/Repair-Broken-Media-Files/issues
 
 ---
 
-*This document tracks roadmap. See [USERGUIDE.md](USERGUIDE.md) for current functionality.*
+*This document tracks roadmap. See [MANUAL.md](MANUAL.md) for current functionality.*
