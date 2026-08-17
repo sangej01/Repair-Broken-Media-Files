@@ -108,7 +108,7 @@ If the Reason says any of these:
 |--------------|------------|
 | **RE-DOWNLOAD** | Damage is in one spot. A new copy will likely fix it. → **Delete + Re-search.** |
 | **BAD SOURCE** | The whole file is rotten. A new copy of the SAME release won't help. → **Delete + Blocklist + Re-search** (app tells Radarr to find a *different* release). |
-| **PLAYABLE** | Tiny glitch, movie still watches fine. → Leave it, or **Mark as Skipped.** |
+| **PLAYABLE** | Tiny glitch, movie still watches fine. → click **Mark as Skipped (keep the file)** in the report, or just leave it. |
 | **CLEAN** | Turns out it's actually fine. → click **Mark CLEAN in database** in the report (or **Re-scan** to clear the CORRUPT flag). |
 
 **Do this (whole-class batch — when you have several Group B files):**

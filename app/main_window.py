@@ -2578,6 +2578,17 @@ class MainWindow(QMainWindow):
                 lambda: self._mark_clean(folder_path, folder_name),
                 True,
             ))
+        elif verdict == "PLAYABLE":
+            # A few localized errors, but the file is watchable. It's not worth
+            # re-downloading and it isn't truly broken, so the useful action is
+            # to stop it showing as an unhandled CORRUPT row. Offer Mark as
+            # Skipped (keep the file). Re-downloading anyway is still available
+            # via the normal Delete + Re-search button if the user prefers.
+            actions.append((
+                "Mark as Skipped (keep the file)",
+                lambda: self._skip_single(folder_path),
+                True,
+            ))
 
         self._show_text_dialog(f"Full Deep Decode - {folder_name}", report, actions=actions)
 
