@@ -206,16 +206,22 @@ There are **two independent** ways a decode ends early, and they're easy to conf
   far the decode got before it froze.
 
 **A STALLED result is NOT a budget timeout.** Raising Timeout/file does nothing for
-stalls — the file never reaches the budget; it's killed after 5 minutes of being
-frozen. Stalls almost always mean the **NAS stopped returning bytes** (network
-congestion, disk seek stall, SMB hiccup), especially when several parallel workers
-are hammering one link with large 4K/HEVC files. Scattered `stuck near` values
-across many files (e.g. 37s, 934s, 4835s) point at I/O flakiness, not many broken
-movies.
+a stall — the file never reaches the budget; it's killed after the stall window of
+no progress.
 
-**If lots of files STALL:**
+**Known cause (fixed):** some files — typically HEVC rips with broken container
+DTS — made ffmpeg emit tens of thousands of benign
+`non monotonic DTS to muxer` warnings. The scanner used to leave ffmpeg's error
+output undrained during the decode, so the OS pipe buffer filled, ffmpeg blocked
+writing to it, the decode froze, and the stall detector killed a perfectly healthy
+file. This is fixed: the scanner now drains ffmpeg's stderr concurrently and passes
+`-fflags +igndts`, so these files decode to completion (usually **CLEAN**).
+
+If you still see genuine STALLs after the fix, they point at real I/O trouble — the
+**NAS not returning bytes** (network congestion, disk seek stall, SMB hiccup),
+especially with many parallel workers on one link. Then:
 1. **Lower Parallel scans** (e.g. to 1–2) so workers don't starve each other's NAS reads.
-2. **Check NAS health / network** — the stall is usually the storage layer, not the file.
+2. **Check NAS health / network** — the stall is then the storage layer, not the file.
 3. If your NAS is just slow-but-steady and stalls transiently, **raise the stall
    limit**: set `REPAIR_STALL_LIMIT_SEC` in `.env` to a larger value (e.g. `900`
    for 15 min), or `0` to disable stall detection entirely (a decode then only ends

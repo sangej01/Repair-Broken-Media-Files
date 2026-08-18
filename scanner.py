@@ -1,5 +1,6 @@
 """Video file scanner - null-decode corruption detection."""
 import atexit
+import collections
 import os
 import subprocess
 import sys
@@ -382,12 +383,35 @@ def null_decode(video_path: Path, timeout_sec: int = 1800, progress_callback=Non
                         pass
         except Exception:
             pass
+
+    # Concurrent stderr drainer. CRITICAL: some files (e.g. HEVC rips with broken
+    # container DTS) make ffmpeg emit tens of thousands of benign
+    # "non monotonic DTS to muxer" lines. If stderr isn't drained continuously,
+    # the OS pipe buffer (~64 KB) fills, ffmpeg BLOCKS on write(), the decode
+    # position freezes, and the stall detector kills a perfectly healthy decode.
+    # Draining in a thread prevents that deadlock. We keep only a bounded tail so
+    # a multi-GB flood can't exhaust memory — the verdict only needs the tail.
+    stderr_tail_lines = collections.deque(maxlen=2000)
+
+    def _consume_stderr(stream):
+        try:
+            for eline in stream:
+                stderr_tail_lines.append(eline)
+        except Exception:
+            pass
+
+    err_thread = None
     
     try:
         # -progress pipe:1 -> machine-readable decode position on stdout.
         # stderr stays reserved for -v error corruption lines.
+        # -fflags +igndts: don't enforce monotonic DTS at the (null) muxer. We
+        # only decode to surface real decode/demux errors; the muxer's DTS
+        # bookkeeping is irrelevant and on some files floods stderr with tens of
+        # thousands of benign warnings (which used to stall the whole decode).
         proc = subprocess.Popen(
-            ["ffmpeg", "-nostdin", "-v", "error", "-progress", "pipe:1",
+            ["ffmpeg", "-nostdin", "-v", "error", "-fflags", "+igndts",
+             "-progress", "pipe:1",
              "-i", str(video_path), "-f", "null", "-"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -403,9 +427,11 @@ def null_decode(video_path: Path, timeout_sec: int = 1800, progress_callback=Non
         # Reader thread for the progress pipe (stdout).
         prog_thread = threading.Thread(target=_consume_progress, args=(proc.stdout,), daemon=True)
         prog_thread.start()
+        # Reader thread for stderr (prevents the pipe-full deadlock above).
+        err_thread = threading.Thread(target=_consume_stderr, args=(proc.stderr,), daemon=True)
+        err_thread.start()
         
         # Poll process and emit progress updates
-        stderr_lines = []
         while proc.poll() is None:
             # If the scan is being cancelled, stop ffmpeg and report CANCELLED
             # (a killed ffmpeg exits non-zero, which must NOT be read as CORRUPT).
@@ -458,17 +484,22 @@ def null_decode(video_path: Path, timeout_sec: int = 1800, progress_callback=Non
             
             time.sleep(0.5)
         
-        # Process completed, get remaining output (stderr = corruption lines)
-        _remaining_stdout, remaining_stderr = proc.communicate()
-        if remaining_stderr:
-            stderr_lines.append(remaining_stderr)
+        # Process completed. stderr/stdout are being drained by their reader
+        # threads; wait for the process to fully reap, then join the drainers so
+        # we've collected the final output before building the verdict.
+        try:
+            proc.wait(timeout=5)
+        except Exception:
+            pass
         if prog_thread:
             prog_thread.join(timeout=2)
+        if err_thread:
+            err_thread.join(timeout=2)
         # Final 100% tick
         if progress_callback:
             progress_callback(time.time() - start, 1.0 if (duration_sec and duration_sec > 0) else None)
         
-        stderr_output = ''.join(stderr_lines)
+        stderr_output = ''.join(stderr_tail_lines)
         
     except FileNotFoundError:
         return "ERROR", "ffmpeg not found on PATH", 0.0
