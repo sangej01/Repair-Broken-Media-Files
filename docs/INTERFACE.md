@@ -228,7 +228,7 @@ The buttons are arranged in two rows. Row 1 is utilities; row 2 is remediation.
 | Button | What it does |
 |--------|--------------|
 | **Select All / Select None** | Tick / untick every visible (displayed) row |
-| **Re-scan TIMEOUTs** | Force a fresh decode of every TIMEOUT file. Most TIMEOUTs are transient NAS I/O stalls and come back CLEAN. |
+| **Re-scan TIMEOUTs** | Force a fresh decode of every TIMEOUT file. TIMEOUT is not a corruption verdict — the decode just didn't finish in the budget; most come back CLEAN on a fresh scan. |
 | **Check Re-downloads** | Ask Radarr which RESEARCHING movies have finished (Imported), which are Downloading, and which are Pending. Saves opening Radarr. |
 | **Backup DB** | Save a timestamped snapshot of the database (also runs automatically on app exit). |
 | **Open Folder** | Open the selected row's folder in Explorer |

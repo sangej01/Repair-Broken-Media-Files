@@ -554,8 +554,9 @@ class MainWindow(QMainWindow):
 
         self._rescan_timeouts_btn = QPushButton("Re-scan TIMEOUTs")
         self._rescan_timeouts_btn.setToolTip(
-            "Re-scan every file currently in TIMEOUT state. Most TIMEOUTs are "
-            "transient NAS I/O stalls and come back CLEAN on a fresh scan."
+            "Re-scan every file currently in TIMEOUT state. TIMEOUT is not a "
+            "corruption verdict — the decode just didn't finish in the budget. "
+            "Most come back CLEAN on a fresh scan."
         )
         self._rescan_timeouts_btn.clicked.connect(self._rescan_timeouts)
         btn_grid.addWidget(self._rescan_timeouts_btn, 0, 3)
@@ -2240,8 +2241,9 @@ class MainWindow(QMainWindow):
                 "",
                 "All re-scanned files timed out again — they did not finish "
                 "decoding within the current per-file budget.",
-                "Raise 'Timeout/file' (e.g. 2 hr or No limit) and re-scan, or "
-                "check NAS speed. TIMEOUT is not a corruption verdict.",
+                "Raise 'Timeout/file' (e.g. 2 hr or No limit) and re-scan. "
+                "TIMEOUT is not a corruption verdict — the files are slow to "
+                "decode, not broken.",
             ]
         msg = "\n".join(lines)
         self._progress_label.setText("Scan complete - switch to Database View to see all results")

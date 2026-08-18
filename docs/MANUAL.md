@@ -36,7 +36,7 @@ Start Scan
   ↓
 Status?
   CLEAN      → done
-  TIMEOUT    → Re-scan TIMEOUTs (usually transient NAS stall)
+  TIMEOUT    → Re-scan TIMEOUTs (didn't finish in the budget; not a verdict)
   ERROR      → fix environment (ffmpeg/PATH/permissions), re-scan
   CORRUPT    → Deep Inspect
                  ↓
@@ -178,11 +178,11 @@ a cancelable progress dialog runs Deep Inspect on each file sequentially. When d
 ## 7. Scenario: TIMEOUTs
 
 TIMEOUT is **not** a verdict — it means the decode didn't finish within the time
-budget, almost always because of transient NAS I/O slowness or a very large file.
+budget, typically because it's a large/long file that decodes slowly.
 
 1. Click **Re-scan TIMEOUTs**.
-2. Most come back **CLEAN**. If one keeps timing out, try a longer **Timeout/file**
-   setting or check NAS health.
+2. Most come back **CLEAN**. If one keeps timing out, raise **Timeout/file**
+   (e.g. 2 hr or No limit) and re-scan.
 3. If a retry comes back **CORRUPT**, it's real corruption — diagnose and remediate.
 
 The completion summary reports every outcome, including a **TIMEOUT** count. If it
