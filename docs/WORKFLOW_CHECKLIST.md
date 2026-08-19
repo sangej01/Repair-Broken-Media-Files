@@ -2,6 +2,8 @@
 
 Open this, pick your task, follow the steps.
 
+New here or feeling lost? Read the [CHEATSHEET.md](CHEATSHEET.md) first — the whole app on one page.
+
 ---
 
 ## How to read a checklist

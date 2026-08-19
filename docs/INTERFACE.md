@@ -2,6 +2,7 @@
 
 Every control in the window, what it does, and when to use it.
 
+For the whole app on one page see [CHEATSHEET.md](CHEATSHEET.md).
 For step-by-step tasks see [WORKFLOW_CHECKLIST.md](WORKFLOW_CHECKLIST.md).
 For beginner orientation see [IDIOTS_GUIDE.md](IDIOTS_GUIDE.md).
 For scenarios, CLI, and troubleshooting see [MANUAL.md](MANUAL.md).

@@ -2,6 +2,7 @@
 
 Scenarios, workflows, CLI reference, and troubleshooting.
 
+- Lost in the moving parts? Read [CHEATSHEET.md](CHEATSHEET.md) — the whole app on one page.
 - New to the window? See [INTERFACE.md](INTERFACE.md) for every control explained.
 - Want a quick task checklist? See [WORKFLOW_CHECKLIST.md](WORKFLOW_CHECKLIST.md).
 - Beginner? Start with [IDIOTS_GUIDE.md](IDIOTS_GUIDE.md).

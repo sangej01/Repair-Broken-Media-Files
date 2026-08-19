@@ -2,6 +2,8 @@
 
 You found a bad movie. This tells you what to do. Follow the steps. Don't think too hard.
 
+**Feeling lost in the moving parts? Start with the [CHEATSHEET.md](CHEATSHEET.md) — the whole app on one page.**
+
 Prefer a task-by-task checklist? See **[WORKFLOW_CHECKLIST.md](WORKFLOW_CHECKLIST.md)**.
 
 ---

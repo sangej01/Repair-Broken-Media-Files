@@ -219,6 +219,7 @@ bytes, so use Deep Inspect on those instead of a blind re-scan.
 
 | Doc | What it's for |
 |-----|---------------|
+| **[CHEATSHEET.md](docs/CHEATSHEET.md)** | The whole app on one page — the scan→fix→verify loop, the two labels, the 4 buttons. Start here if it feels like too many parts. |
 | **[IDIOTS_GUIDE.md](docs/IDIOTS_GUIDE.md)** | Beginner orientation — what to do with each status, Group A vs B at a glance |
 | **[WORKFLOW_CHECKLIST.md](docs/WORKFLOW_CHECKLIST.md)** | Step-by-step task checklists — open this, pick your task, follow the steps |
 | **[INTERFACE.md](docs/INTERFACE.md)** | Every control in the window — filters, buttons, right-click menu, columns |
