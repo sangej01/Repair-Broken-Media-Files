@@ -2,6 +2,8 @@
 
 Open this, pick your task, follow the steps.
 
+New here or feeling lost? Read the [CHEATSHEET.md](CHEATSHEET.md) first — the whole app on one page.
+
 ---
 
 ## How to read a checklist
@@ -186,10 +188,14 @@ _Done when: bad-source + fixable rows show **RESEARCHING**; inconclusive/error m
 - [ ] Read the report.
   - **IF** the report offers **Delete + Re-search** → click it (Group A path; re-downloads the same release).
   - **IF** the report offers **Delete + Blocklist + Re-search** → click it (Group B bad-source path; blocklists the bad release and searches for a different one).
-  - **IF** the result is ambiguous and the report offers **Run Full Deep Decode** → click it for a whole-file error map, then decide.
+  - **IF** the result is ambiguous and the report offers **Run Full Deep Decode** → click it for a whole-file error map, then act on the verdict:
+    - **CLEAN** → click **Mark CLEAN in database** (false positive; no re-scan needed).
+    - **PLAYABLE** → click **Mark as Skipped (keep the file)** (minor glitches, still watchable).
+    - **RE-DOWNLOAD** → click **Delete + Re-search** (localized damage; same release should fix it).
+    - **BAD SOURCE** → use **Delete + Blocklist + Re-search** so Radarr finds a different release.
   - **IF** the result is inconclusive → note the movie; re-check after Radarr grabs a new release, or investigate manually.
 
-_Done when: the row moves to **RESEARCHING** (if you accepted an action)._
+_Done when: the row moves to **RESEARCHING**, **CLEAN**, or **SKIPPED** depending on the action you took._
 
 ---
 

@@ -2,6 +2,7 @@
 
 Scenarios, workflows, CLI reference, and troubleshooting.
 
+- Lost in the moving parts? Read [CHEATSHEET.md](CHEATSHEET.md) — the whole app on one page.
 - New to the window? See [INTERFACE.md](INTERFACE.md) for every control explained.
 - Want a quick task checklist? See [WORKFLOW_CHECKLIST.md](WORKFLOW_CHECKLIST.md).
 - Beginner? Start with [IDIOTS_GUIDE.md](IDIOTS_GUIDE.md).
@@ -36,7 +37,7 @@ Start Scan
   ↓
 Status?
   CLEAN      → done
-  TIMEOUT    → Re-scan TIMEOUTs (usually transient NAS stall)
+  TIMEOUT    → Re-scan TIMEOUTs (didn't finish in the budget; not a verdict)
   ERROR      → fix environment (ffmpeg/PATH/permissions), re-scan
   CORRUPT    → Deep Inspect
                  ↓
@@ -115,7 +116,9 @@ Reason label starts with one of:
 `[Timestamp (DTS/PTS) problem]`
 
 These often mean the source release is fundamentally bad. Re-downloading the
-same release will likely reproduce the same broken file.
+same release will likely reproduce the same broken file — so **do not** use the
+plain **Delete + Re-search** button on Group B files. (If you do, a safety guard
+warns you and offers to blocklist + search for a different release instead.)
 
 **One at a time:** right-click → **Deep Inspect** → follow the offered action:
 - **Delete + Re-search** (truncated / fixable)
@@ -176,16 +179,54 @@ a cancelable progress dialog runs Deep Inspect on each file sequentially. When d
 ## 7. Scenario: TIMEOUTs
 
 TIMEOUT is **not** a verdict — it means the decode didn't finish within the time
-budget, almost always because of transient NAS I/O slowness or a very large file.
+budget, typically because it's a large/long file that decodes slowly.
 
 1. Click **Re-scan TIMEOUTs**.
-2. Most come back **CLEAN**. If one keeps timing out, try a longer **Timeout/file**
-   setting or check NAS health.
+2. Most come back **CLEAN**. If one keeps timing out, raise **Timeout/file**
+   (e.g. 2 hr or No limit) and re-scan.
 3. If a retry comes back **CORRUPT**, it's real corruption — diagnose and remediate.
 
+The completion summary reports every outcome, including a **TIMEOUT** count. If it
+shows something like `Folders scanned: 43, CLEAN: 0, CORRUPT: 0, ... TIMEOUT: 43`,
+that means every file *timed out again* — none finished decoding in the current
+budget. That's expected for large 4K/HEVC rips over a slow NAS; raise
+**Timeout/file** (e.g. 2 hr or No limit) and re-scan, or investigate NAS speed.
+A TIMEOUT is never a corruption verdict — the files are just slow, not broken.
+
 The timeout is duration-aware (long low-bitrate films get a proportional budget).
-A stall detector flags reads that make no progress for ~5 minutes as
-"STALLED near X" rather than letting them run indefinitely.
+
+### Two different limits: budget vs. stall
+
+There are **two independent** ways a decode ends early, and they're easy to confuse:
+
+- **Timeout/file budget** — the total wall-clock time a decode is allowed. Raising
+  this (e.g. to 2 hr) helps files that decode steadily but slowly.
+- **Stall detector** — kills a decode that makes **zero progress for 5 minutes
+  straight**, *regardless of the budget*. The Reason reads
+  `STALLED: decode made no progress for 300s (stuck near <X>)`, where `<X>` is how
+  far the decode got before it froze.
+
+**A STALLED result is NOT a budget timeout.** Raising Timeout/file does nothing for
+a stall — the file never reaches the budget; it's killed after the stall window of
+no progress.
+
+**Known cause (fixed):** some files — typically HEVC rips with broken container
+DTS — made ffmpeg emit tens of thousands of benign
+`non monotonic DTS to muxer` warnings. The scanner used to leave ffmpeg's error
+output undrained during the decode, so the OS pipe buffer filled, ffmpeg blocked
+writing to it, the decode froze, and the stall detector killed a perfectly healthy
+file. This is fixed: the scanner now drains ffmpeg's stderr concurrently and passes
+`-fflags +igndts`, so these files decode to completion (usually **CLEAN**).
+
+If you still see genuine STALLs after the fix, they point at real I/O trouble — the
+**NAS not returning bytes** (network congestion, disk seek stall, SMB hiccup),
+especially with many parallel workers on one link. Then:
+1. **Lower Parallel scans** (e.g. to 1–2) so workers don't starve each other's NAS reads.
+2. **Check NAS health / network** — the stall is then the storage layer, not the file.
+3. If your NAS is just slow-but-steady and stalls transiently, **raise the stall
+   limit**: set `REPAIR_STALL_LIMIT_SEC` in `.env` to a larger value (e.g. `900`
+   for 15 min), or `0` to disable stall detection entirely (a decode then only ends
+   on the Timeout/file budget). Default is `300`.
 
 ---
 
@@ -307,6 +348,7 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for building the exe and multi-PC setup.
 | Corruption type filter not visible | Window too narrow | Widen the window; the filter is to the right of Remediation |
 | UI lags 4–5 s per click | NAS latency blocking a UI-thread read | Transient; check Z: health; restart app if persistent |
 | Both progress bars stuck at 0% | ffmpeg hung on a NAS read | Stall detector flags it at ~5 min; or Stop + re-scan |
+| Many files "STALLED: no progress for 300s" | NAS stopped returning bytes under parallel load — NOT a budget timeout (raising Timeout/file won't help) | Lower **Parallel scans**; check NAS/network; if stalls are transient, raise `REPAIR_STALL_LIMIT_SEC` in `.env` (e.g. 900) or set 0 to disable |
 | "Scanner Busy" | Another scanner holds the lock | Close the other instance; stale locks auto-clear after expiry |
 | "Movie not found in Radarr" | Folder name doesn't match Radarr's library | See Scenario 8 above |
 | Movie re-downloaded but still CORRUPT | Radarr re-grabbed the same bad release | Deep Inspect → BAD SOURCE → Delete + Blocklist + Re-search |

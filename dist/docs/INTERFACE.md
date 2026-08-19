@@ -2,6 +2,7 @@
 
 Every control in the window, what it does, and when to use it.
 
+For the whole app on one page see [CHEATSHEET.md](CHEATSHEET.md).
 For step-by-step tasks see [WORKFLOW_CHECKLIST.md](WORKFLOW_CHECKLIST.md).
 For beginner orientation see [IDIOTS_GUIDE.md](IDIOTS_GUIDE.md).
 For scenarios, CLI, and troubleshooting see [MANUAL.md](MANUAL.md).
@@ -99,8 +100,9 @@ Examples of combinations:
 | **FAILED** | A remediation step errored — needs attention |
 | **SKIPPED** | You chose to leave it alone |
 
-Rows in **DELETED / RESEARCHING / REMEDIATED** are grayed out and italicized —
-the original has been deleted and a fresh download is in progress.
+Rows in **DELETED / RESEARCHING / REMEDIATED / SKIPPED** are grayed out and
+italicized — their disposition is handled (being replaced by Radarr, or
+deliberately left alone).
 
 > Hover the **Status** and **Remediation** column headers in the app for a quick
 > reminder tooltip.
@@ -124,7 +126,7 @@ Both modes read/write the same database.
 |---------|--------------|
 | **Library: A-H / I-S / T-Z** | Which library roots to scan. |
 | **Parallel scans** | How many files to decode at once (1–8). Default 2 (good for 1 GbE NAS). Higher = faster but more CPU/disk. |
-| **Timeout/file** | Per-file ffmpeg time budget (30 min … No limit). Raise for large 4K files over a slow NAS. A hit yields TIMEOUT, not CORRUPT. |
+| **Timeout/file** | Per-file ffmpeg *time budget* (30 min … No limit). Raise for large 4K files that decode slowly but steadily. A hit yields TIMEOUT, not CORRUPT. Note: this is separate from the **stall detector**, which kills a decode that makes zero progress for 5 min (`STALLED: …`) regardless of the budget — see MANUAL §7. |
 | **Start Scan** | Begins scanning. Automatically switches to Live mode. |
 | **Stop** | Cancels the running scan (also **Esc**). In-flight files are reset to UNKNOWN — never falsely recorded as CORRUPT. |
 
@@ -170,7 +172,7 @@ and disappear when it finishes.
 | **Attempts** | Remediation attempts. **Bold orange at 2**, **bold red at 3+** — repeated failures mean a systemic problem; investigate before trying again. |
 
 Click any column header to sort. CORRUPT rows are bold red. Rows in
-DELETED / RESEARCHING / REMEDIATED are grayed and italic.
+DELETED / RESEARCHING / REMEDIATED / SKIPPED are grayed and italic (handled).
 
 ---
 
@@ -208,7 +210,7 @@ error locations and returns a verdict:
 | Verdict | Meaning | Action |
 |---------|---------|--------|
 | **CLEAN** | No errors — earlier flag was a false positive | Click **Mark CLEAN in database** in the report (no re-scan needed) |
-| **PLAYABLE** | A few localized errors; watchable | Leave it or Mark as Skipped |
+| **PLAYABLE** | A few localized errors; watchable | Click **Mark as Skipped (keep the file)** in the report, or leave it |
 | **RE-DOWNLOAD** | Errors concentrated in one region | Delete + Re-search (same release fine) |
 | **BAD SOURCE** | Errors spread across most of the file | Delete + Blocklist + Re-search (need a different release) |
 
@@ -227,7 +229,7 @@ The buttons are arranged in two rows. Row 1 is utilities; row 2 is remediation.
 | Button | What it does |
 |--------|--------------|
 | **Select All / Select None** | Tick / untick every visible (displayed) row |
-| **Re-scan TIMEOUTs** | Force a fresh decode of every TIMEOUT file. Most TIMEOUTs are transient NAS I/O stalls and come back CLEAN. |
+| **Re-scan TIMEOUTs** | Force a fresh decode of every TIMEOUT file. TIMEOUT is not a corruption verdict — the decode just didn't finish in the budget; most come back CLEAN on a fresh scan. |
 | **Check Re-downloads** | Ask Radarr which RESEARCHING movies have finished (Imported), which are Downloading, and which are Pending. Saves opening Radarr. |
 | **Backup DB** | Save a timestamped snapshot of the database (also runs automatically on app exit). |
 | **Open Folder** | Open the selected row's folder in Explorer |
@@ -238,7 +240,7 @@ The buttons are arranged in two rows. Row 1 is utilities; row 2 is remediation.
 | Button | What it does |
 |--------|--------------|
 | **Queue for Remediation** | Mark the checked rows QUEUED. Nothing is deleted yet. |
-| **Delete + Re-search** | Run remediation on **checked rows** (or all QUEUED if nothing is checked): delete from disk → Radarr unmonitor → delete file record → monitor → search for the same release. Shows a confirm dialog listing targets before acting. |
+| **Delete + Re-search** | Run remediation on **checked rows** (or all QUEUED if nothing is checked): delete from disk → Radarr unmonitor → delete file record → monitor → search for the same release. Shows a confirm dialog listing targets before acting. **Group B safety guard:** if any target is a Group B (source-damage) file — where re-downloading the same release won't help — it warns first and offers to blocklist those and search for a *different* release instead. |
 | **Re-search all Group A** / **Inspect all Group B** | Context batch button — label and behavior follow the **Corruption type** filter. **Group A selected:** confirm dialog → Delete + Re-search on all visible Group A targets (checked rows preferred, else all shown Group A rows not already in an active remediation state). **Group B selected:** runs Deep Inspect on each visible Group B file sequentially (cancelable progress dialog), then shows a confirm dialog for bad-source targets (blocklist + different-release search), then a confirm dialog for fixable targets (same-release re-search); inconclusive/errors go to a read-only summary dialog. Disabled when Corruption type is *All types* or *Unclassified*, and while a scan or remediation is running. |
 
 > **Group B two-pass note:** the bad-source confirm fires first; if you click Yes

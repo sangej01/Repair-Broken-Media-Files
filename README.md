@@ -2,7 +2,7 @@
 
 Scan your movie library for structurally corrupted files and remediate them automatically via Radarr.
 
-![Version](https://img.shields.io/badge/version-1.9.0-blue)
+![Version](https://img.shields.io/badge/version-1.9.1-blue)
 ![Python](https://img.shields.io/badge/python-3.11+-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -349,6 +349,22 @@ Ensure folder name matches: `Movie Title (YYYY)`
 
 The running version is shown in the window title/subtitle and via `python main.py version`.
 The single source of truth is `APP_VERSION` in `config.py`.
+
+**v1.9.1** (2026-08-19)
+- **Fixed false STALLs** — HEVC rips with broken container DTS made ffmpeg flood
+  stderr, which (undrained) filled the pipe buffer and froze the decode; the stall
+  detector then killed healthy files. Scanner now drains stderr concurrently and
+  passes `-fflags +igndts`. 42 of 43 stuck TIMEOUTs cleared after the fix.
+- **Configurable stall limit** — `REPAIR_STALL_LIMIT_SEC` in `.env` (0 disables).
+- **Scan summaries count TIMEOUT/MISSING** — no more "43 scanned, all zero".
+- **Group B safety guard** on plain Delete + Re-search (offers blocklist instead).
+- **Full Deep Decode one-click follow-ups** — CLEAN → Mark CLEAN; PLAYABLE → Mark
+  as Skipped.
+- **SKIPPED rows grayed** like other handled rows.
+- **View dropdown sync** — targeted re-scans no longer leave the dropdown showing
+  "Database" while scoped to a subset.
+- **Punctuation-aware Radarr matching** (`Dont.Move.` → `Don't Move`).
+- **CHEATSHEET.md** — the whole app on one page.
 
 **v1.9.0** (2026-08-17)
 - **Corruption-type filter + context batch button** — filter CORRUPT rows by
