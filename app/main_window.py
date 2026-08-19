@@ -1458,8 +1458,20 @@ class MainWindow(QMainWindow):
             scanlock.release()
             return
 
-        # Switch to live view so results update in place.
+        # Switch to live view so results update in place. Sync the dropdown so it
+        # doesn't keep saying "Database" while we're actually scoped to just the
+        # re-scanned folders (that mismatch made the table look like it was hiding
+        # rows). We block signals so this doesn't retrigger _on_view_mode_changed
+        # and wipe the folders we just pre-loaded. Remember where the user was so
+        # we can restore it when the targeted re-scan finishes.
+        self._prev_view_mode_text = self._view_mode_combo.currentText()
         self._view_mode = "live"
+        self._view_mode_combo.blockSignals(True)
+        for i in range(self._view_mode_combo.count()):
+            if self._view_mode_combo.itemText(i).startswith("Live"):
+                self._view_mode_combo.setCurrentIndex(i)
+                break
+        self._view_mode_combo.blockSignals(False)
         from pathlib import Path as _P
         folder_paths = [_P(f) for f in folders]
 
@@ -2246,9 +2258,24 @@ class MainWindow(QMainWindow):
                 "decode, not broken.",
             ]
         msg = "\n".join(lines)
-        self._progress_label.setText("Scan complete - switch to Database View to see all results")
         self._progress_bar.setValue(stats['folders_done'])
-        
+
+        # If this was a TARGETED re-scan (e.g. Re-scan TIMEOUTs) that temporarily
+        # forced Live view, restore the view the user was in before — otherwise the
+        # dropdown says "Database" while the table is still scoped to just the
+        # re-scanned folders, which looks like rows are missing. Selecting the combo
+        # re-runs _refresh_table via its signal, repopulating the full result set.
+        prev = getattr(self, "_prev_view_mode_text", None)
+        if prev:
+            self._prev_view_mode_text = None
+            if prev.startswith("Database") and not self._view_mode_combo.currentText().startswith("Database"):
+                self._view_mode_combo.setCurrentText(prev)  # fires _on_view_mode_changed -> refresh
+            else:
+                self._refresh_table()
+            self._progress_label.setText("Re-scan complete - showing all results")
+        else:
+            self._progress_label.setText("Scan complete - switch to Database View to see all results")
+
         # Re-enable sorting after scan
         if self._view_mode == "database":
             self._table.setSortingEnabled(True)
