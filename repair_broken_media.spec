@@ -24,6 +24,7 @@ hiddenimports = [
     # static analysis can miss.
     "dbbackup",
     "scanlock",
+    "mount_drives",
 ]
 
 a = Analysis(
