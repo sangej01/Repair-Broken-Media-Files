@@ -28,6 +28,20 @@ function Fail($msg) {
 if (-not (Test-Path "main.py")) { Fail "main.py not found. Run this script from the project root." }
 if (-not (Test-Path "repair_broken_media.spec")) { Fail "repair_broken_media.spec not found." }
 
+# Resolve the launcher deploy target (sibling of this tool's parent folder).
+$LauncherTarget = Join-Path (Split-Path (Get-Location) -Parent) "Movie Tools Launcher\Repair Broken Media Files"
+
+# Step 0: Sync shared modules from common/ so the build never bundles a stale copy.
+Write-Host "[0/5] Syncing shared modules from common/..." -ForegroundColor Yellow
+$CommonSrc = Join-Path (Split-Path (Get-Location) -Parent) "common\mount_drives.py"
+if (Test-Path $CommonSrc) {
+    Copy-Item $CommonSrc ".\mount_drives.py" -Force
+    Write-Host "  Synced: mount_drives.py"
+} else {
+    Write-Host "  WARNING: common\mount_drives.py not found at $CommonSrc - using existing local copy." -ForegroundColor Yellow
+}
+Write-Host ""
+
 # Step 1: Ensure dependencies are installed (pipenv writes to stderr; that's OK)
 Write-Host "[1/5] Ensuring app dependencies are installed..." -ForegroundColor Yellow
 pipenv install 2>&1 | ForEach-Object { "$_" } | Out-Null
@@ -98,10 +112,22 @@ Write-Host ""
 Write-Host "Files in dist/:"
 Get-ChildItem $DistDir | Select-Object Name, @{N='Size(MB)'; E={[math]::Round($_.Length/1MB, 2)}} | Format-Table
 
+# Deploy exe to Movie Tools Launcher.
+Write-Host "Deploying to Movie Tools Launcher..." -ForegroundColor Yellow
+if (Test-Path $LauncherTarget) {
+    Copy-Item $ExePath -Destination $LauncherTarget -Force
+    $DeployedPath = Join-Path $LauncherTarget "RepairBrokenMedia.exe"
+    Write-Host "  Copied -> $DeployedPath" -ForegroundColor Green
+} else {
+    Write-Host "  WARNING: Launcher target not found at $LauncherTarget" -ForegroundColor Yellow
+    Write-Host "           Create the folder or run the full build-launcher.ps1 first."
+}
+Write-Host ""
+
 Write-Host "Next steps:" -ForegroundColor Cyan
 Write-Host "  1. Copy the contents of dist/ to the target PC"
 Write-Host "  2. On target PC: copy .env.example to .env and edit"
-Write-Host "  3. Make sure ffmpeg is on the target PC's PATH"
+Write-Host "  3. Make sure ffmpeg is on the target PC PATH"
 Write-Host "  4. Run RepairBrokenMedia.exe"
 Write-Host ""
 Write-Host "See docs/DEPLOYMENT.md for details." -ForegroundColor Cyan
