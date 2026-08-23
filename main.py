@@ -1,5 +1,6 @@
 """Entry point for Repair Broken Media Files tool."""
 import argparse
+import logging
 import sys
 import time
 from pathlib import Path
@@ -9,8 +10,26 @@ import scanner
 import config
 
 
+def _ensure_drives():
+    """Attempt to (re)mount any configured network drives before the app starts.
+
+    Silently skips if config.MAPPED_DRIVES is empty (no credentials configured).
+    Failures are logged as warnings — a missing drive is reported but never
+    prevents the app from launching; the user can still work with local data.
+    """
+    if not config.MAPPED_DRIVES:
+        return
+    from mount_drives import ensure_drives
+    log = logging.getLogger(__name__)
+    results = ensure_drives(config.MAPPED_DRIVES, logger=log)
+    for r in results:
+        if not r["ok"]:
+            log.warning("Drive %s: not accessible — %s", r["letter"], r["message"])
+
+
 def launch_gui():
     """Launch the PySide6 GUI."""
+    _ensure_drives()
     from PySide6.QtWidgets import QApplication
     from app.main_window import MainWindow
     
@@ -31,6 +50,8 @@ def cli_scan(args):
     parser.add_argument("--timeout", type=int, default=1800, help="Per-file ffmpeg timeout in seconds (default: 1800)")
     opts = parser.parse_args(args)
     
+    _ensure_drives()
+
     # Get library roots
     if opts.root:
         roots = [Path(r) for r in opts.root]

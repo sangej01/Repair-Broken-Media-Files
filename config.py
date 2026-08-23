@@ -79,6 +79,28 @@ WORKER_ID = socket.gethostname()  # override here if needed
 LOGS_DIR = Path(__file__).parent / "logs"
 LOGS_DIR.mkdir(exist_ok=True)
 
+# =============================================================================
+# MAPPED DRIVES
+# =============================================================================
+# Network drives that this tool needs to function.  Consumed by mount_drives.py
+# (local copy is a synced mirror of common/mount_drives.py — edit only the
+# common/ original; build-launcher.ps1 overwrites this copy before building).
+# Credentials are read from env vars so they never appear in source.
+#
+# Pass an empty list to disable drive self-healing entirely; the list can also
+# be overridden at runtime — it's just a plain Python list of dicts.
+MAPPED_DRIVES = []
+_z_unc  = os.getenv("REPAIR_Z_UNC",  r"\\192.168.1.198\Media2")
+_z_user = os.getenv("REPAIR_Z_USER", "")
+_z_pass = os.getenv("REPAIR_Z_PASS", "")
+if _z_unc and _z_user:
+    MAPPED_DRIVES.append({
+        "letter":   "Z",
+        "unc":      _z_unc,
+        "user":     _z_user,
+        "password": _z_pass,
+    })
+
 
 def get_library_roots():
     """

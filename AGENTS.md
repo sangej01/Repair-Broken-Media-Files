@@ -21,6 +21,20 @@ act on ONE active handoff; if multiple are ACTIVE, ask which to use.
 
 If there is no active handoff file, proceed normally with the user's request.
 
+## Shared modules
+
+- `mount_drives.py` (root of this repo) is a **synced copy** of
+  `Media Tools Consortium/common/mount_drives.py`.  
+  **Do not edit the local copy.** Edit `common/mount_drives.py` instead.  
+  `build-launcher.ps1` overwrites it from `common/` before every build, so
+  any hand-edits here will be silently clobbered.  
+  To sync manually outside a build:
+  ```powershell
+  Copy-Item "..\common\mount_drives.py" ".\mount_drives.py" -Force
+  ```
+  It is imported by `main.py` via `from mount_drives import ensure_drives`
+  and called at startup (GUI and CLI scan paths) to self-heal the `Z:` drive.
+
 ## Project quick facts
 
 - Windows / PowerShell environment.
