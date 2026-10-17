@@ -171,6 +171,6 @@ Broken Media Files are interactive tools you run on the dev PC.
 - **[MEDIA_FILE_INTEGRITY_CHECKING.md](../../Movie Library Compressor/docs/MEDIA_FILE_INTEGRITY_CHECKING.md)** — the
   compressor's check chain and how corruption is detected.
 - **[USERGUIDE.md](../../Movie Library Compressor/docs/USERGUIDE.md)** — compressor statuses, emails, configuration.
-- `../../Movie Fixer/USERGUIDE.md` — Requeue / Skip Forever.
+- `../../Movie Fixer/docs/USERGUIDE.md` — Requeue / Skip Forever.
 - `../README.md` and `CHEATSHEET.md` — the
   corruption scan → fix → verify loop.
