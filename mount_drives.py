@@ -134,7 +134,13 @@ def _net_use_mount(spec: DriveSpec) -> tuple[bool, str]:
         if result.returncode == 0:
             return True, f"Mounted {letter}: -> {unc}"
         stderr = (result.stderr or result.stdout or "").strip()
-        return False, f"net use exited {result.returncode}: {stderr[:200]}"
+        msg = f"net use exited {result.returncode}: {stderr[:200]}"
+        if "85" in stderr and unc.lower().startswith(r"\\sshfs"):
+            # The sshfs process behind the letter is hung; it belongs to the WinFsp service,
+            # so only an admin can stop it -- this app can't clear the letter itself.
+            msg += (f"\n\n{letter}: is held by a hung SSHFS session. Fix: run "
+                    r"C:\Scripts\Fix-WhatboxDrive.ps1 (one UAC prompt), then try again.")
+        return False, msg
     except subprocess.TimeoutExpired:
         return False, f"net use timed out mounting {letter}: -> {unc}"
     except FileNotFoundError:
