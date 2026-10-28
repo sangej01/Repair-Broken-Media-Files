@@ -4,11 +4,12 @@ import socket
 import sys
 from pathlib import Path
 from dotenv import load_dotenv
+from shared_secrets import load_shared_secrets
 
 # Single source of truth for the app version. Bump this whenever a feature is
 # added; it is shown in the window title and the CLI banner so you can always
 # tell which build is running.
-APP_VERSION = "1.9.1"
+APP_VERSION = "1.9.2"
 
 if getattr(sys, "frozen", False):
     SCRIPT_DIR = Path(sys.executable).parent
@@ -20,6 +21,8 @@ if os.getenv("LAUNCHED_FROM_MEDIA_TOOLS_LAUNCHER"):
     load_dotenv(SCRIPT_DIR / ".env", override=True)
 else:
     load_dotenv(SCRIPT_DIR / ".env", override=True)
+
+load_shared_secrets()
 
 # Radarr connection
 RADARR_HOST = os.getenv("RADARR_URL", "http://mforum-ms01-a.tail425a06.ts.net")
@@ -92,7 +95,7 @@ LOGS_DIR.mkdir(exist_ok=True)
 MAPPED_DRIVES = []
 _z_unc  = os.getenv("REPAIR_Z_UNC",  r"\\192.168.1.198\Media2")
 _z_user = os.getenv("REPAIR_Z_USER", "")
-_z_pass = os.getenv("REPAIR_Z_PASS", "")
+_z_pass = os.getenv("NAS_DRIVE_PASSWORD") or os.getenv("REPAIR_Z_PASS", "")
 if _z_unc and _z_user:
     MAPPED_DRIVES.append({
         "letter":   "Z",

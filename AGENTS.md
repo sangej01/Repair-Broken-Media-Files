@@ -23,6 +23,11 @@ If there is no active handoff file, proceed normally with the user's request.
 
 ## Shared modules
 
+- `shared_secrets.py` mirrors `common/shared_secrets.py`; edit only the common
+  original. Config loads shared values after local dotenv settings.
+  `NAS_DRIVE_PASSWORD` takes precedence over legacy `REPAIR_Z_PASS`.
+  Never package the real `.secrets.env` file.
+
 - `mount_drives.py` (root of this repo) is a **synced copy** of
   `Media Tools Consortium/common/mount_drives.py`.  
   **Do not edit the local copy.** Edit `common/mount_drives.py` instead.  

@@ -33,6 +33,9 @@ $LauncherTarget = Join-Path (Split-Path (Get-Location) -Parent) "Movie Tools Lau
 
 # Step 0: Sync shared modules from common/ so the build never bundles a stale copy.
 Write-Host "[0/5] Syncing shared modules from common/..." -ForegroundColor Yellow
+$SharedSecrets = Join-Path (Split-Path (Get-Location) -Parent) "common\shared_secrets.py"
+if (-not (Test-Path $SharedSecrets)) { Fail "Canonical common/shared_secrets.py not found." }
+Copy-Item $SharedSecrets ".\shared_secrets.py" -Force
 $CommonSrc = Join-Path (Split-Path (Get-Location) -Parent) "common\mount_drives.py"
 if (Test-Path $CommonSrc) {
     Copy-Item $CommonSrc ".\mount_drives.py" -Force
